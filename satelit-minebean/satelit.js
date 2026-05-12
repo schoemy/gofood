@@ -36,7 +36,7 @@ const CONFIG = {
     CACHE_FILE: path.join(__dirname, '.cache', 'rounds.json'),
     // Kalibrasi strategi
     MARGIN_LINDAS_PCT: 0.15,      // +15% di atas avg lawan (sesuai niat komentar asli)
-    HARD_CAP_SETMAX: 0.000120,    // Batas atas absolut setmax
+    HARD_CAP_SETMAX: 0.000250,    // Batas atas absolut setmax (naik untuk cover whale dominan)
     LOTRE_MIN_BEAN: 0.9,          // BEAN reward >= 0.9 dianggap mode "single winner/lotre"
 };
 
@@ -348,7 +348,7 @@ async function jalankanSatelit() {
             `   ↳ Break-even bet (edge ~11%): ${(totalEV / 0.11).toFixed(8)} ETH`;
     }
 
-    // --- 5. Leaderboard + saran setmax ---
+    // --- 5. Leaderboard + saran setmax (dua level: konservatif vs agresif) ---
     const topPlayers = Object.keys(leaderboard)
         .map((k) => ({
             addr: k,
@@ -358,22 +358,34 @@ async function jalankanSatelit() {
         .sort((a, b) => b.menang - a.menang)
         .slice(0, 5);
 
-    // Cari target lawan terkuat (bukan diri sendiri) dari kelas Semut sampai MARA_ATAS
-    const kandidat = topPlayers.filter(
+    // Pemain paling dominan (pertimbangkan semua kelas, kecuali Anda)
+    const dominan = topPlayers.find((p) => p.addr !== CONFIG.MY_ADDRESS);
+
+    // Target konservatif: kelas Semut-Marathon (terjangkau bankroll kecil)
+    const targetKons = topPlayers.find(
         (p) => p.addr !== CONFIG.MY_ADDRESS && p.avg < THRESHOLDS.MARATHON_ATAS
     );
 
-    let saranSetmax = 'Tidak ada target dominan di kelas Semut-Marathon. Pertahankan setmax.';
-    if (kandidat.length > 0) {
-        // Pilih target berdasarkan jumlah kemenangan terbanyak
-        const target = kandidat[0];
-        let targetHit = target.avg * (1 + CONFIG.MARGIN_LINDAS_PCT);
-        if (targetHit > CONFIG.HARD_CAP_SETMAX) targetHit = CONFIG.HARD_CAP_SETMAX;
+    const fmtSaran = (target, label) => {
+        if (!target) return null;
+        let hit = target.avg * (1 + CONFIG.MARGIN_LINDAS_PCT);
+        const capped = hit > CONFIG.HARD_CAP_SETMAX;
+        if (capped) hit = CONFIG.HARD_CAP_SETMAX;
+        return (
+            `*${label}:* \`/setmax ${hit.toFixed(6)}\`${capped ? ' _(dicap)_' : ''}\n` +
+            `   ↳ vs \`${shortAddr(target.addr)}\` — ${target.menang}x menang, avg ${target.avg.toFixed(6)} ETH`
+        );
+    };
 
-        saranSetmax =
-            `/setmax ${targetHit.toFixed(6)}\n` +
-            `   _(Melindas target \`${shortAddr(target.addr)}\` — ${target.menang}x menang, avg ${target.avg.toFixed(6)} ETH)_`;
+    const saranList = [];
+    if (targetKons) saranList.push(fmtSaran(targetKons, '🛡️ Konservatif (Semut-Marathon)'));
+    if (dominan && dominan.addr !== targetKons?.addr) {
+        saranList.push(fmtSaran(dominan, '⚔️ Agresif (vs Dominan)'));
     }
+    const saranSetmax =
+        saranList.length > 0
+            ? saranList.join('\n\n')
+            : '_Tidak ada target jelas. Pertahankan setmax saat ini._';
 
     // --- 6. Susun laporan ---
     const laporan = [
@@ -416,9 +428,8 @@ async function jalankanSatelit() {
             : '_Belum ada pemenang lotre valid di window ini._',
         ``,
         `========================`,
-        `💡 *KESIMPULAN TAKTIS:*`,
-        `Plafon Pelindung (target +${(CONFIG.MARGIN_LINDAS_PCT * 100).toFixed(0)}%):`,
-        `👉 \`${saranSetmax}\``,
+        `💡 *KESIMPULAN TAKTIS (target +${(CONFIG.MARGIN_LINDAS_PCT * 100).toFixed(0)}%):*`,
+        saranSetmax,
     ].join('\n');
 
     // --- 7. Kirim ---

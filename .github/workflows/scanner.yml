@@ -44,11 +44,20 @@ jobs:
           EXCHANGE_ID: kraken
           MARKET_TYPE: auto
           FALLBACK_EXCHANGES: "kraken,mexc,bingx,bitget,coinbase"
-          # Symbols work on both spot and perp exchanges; scanner strips
-          # the :USDT suffix for spot-only exchanges like Kraken.
-          WATCHLIST: "BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT,PYTH/USDT:USDT"
+          # Watchlist: BTC, ETH, BNB, SOL, PYTH (:USDT suffix auto-stripped on spot)
+          WATCHLIST: "BTC/USDT:USDT,ETH/USDT:USDT,BNB/USDT:USDT,SOL/USDT:USDT,PYTH/USDT:USDT"
           TIMEFRAMES: "30m,1h,4h"
+          # ── Core indicator ──
           ATR_LENGTH: "10"
           ATR_MULT: "3.0"
+          # ── Confluence filters (biar hanya ambil sinyal trend-aligned) ──
           USE_RSI_FILTER: "true"
+          USE_MACD_FILTER: "true"
+          MACD_FAST: "12"
+          MACD_SLOW: "26"
+          MACD_SIGNAL: "9"
+          USE_EMA_FILTER: "true"
+          EMA_LENGTH: "200"
+          # Need enough history for EMA 200 + MACD warmup
+          LOOKBACK: "500"
         run: python -m bot.scanner --once

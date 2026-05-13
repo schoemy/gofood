@@ -47,6 +47,15 @@ def format_signal(sig: Signal) -> str:
 
     symbol_tag = "#" + sig.symbol.split("/")[0].replace(":", "") + "USDT"
 
+    # Confluence line — only show fields that were actually computed
+    conf_parts = [f"RSI: <code>{sig.rsi:.1f}</code>"]
+    if sig.confluence:
+        if "macd_hist" in sig.confluence:
+            conf_parts.append(f"MACD hist: <code>{sig.confluence['macd_hist']}</code>")
+        for k, v in sig.confluence.items():
+            if k.startswith("ema_"):
+                conf_parts.append(f"{k.upper()}: <code>{_fmt_price(float(v))}</code>")
+
     msg = (
         f"📩 {symbol_tag} {sig.timeframe} | Mid-Term\n"
         f"{header}\n"
@@ -57,7 +66,7 @@ def format_signal(sig: Signal) -> str:
         f"_____\n"
         f"🧲 Trend-Line: <code>{_fmt_price(sig.trend_line)}</code>\n"
         f"❌ Stop-Loss: <code>{_fmt_price(sig.stop_loss)}</code>\n"
-        f"📊 ATR: <code>{_fmt_price(sig.atr)}</code>  |  RSI: <code>{sig.rsi:.1f}</code>\n"
+        f"📊 ATR: <code>{_fmt_price(sig.atr)}</code>  |  {'  |  '.join(conf_parts)}\n"
         f"💡 After TP1, move the rest of the position to breakeven."
     )
     return msg

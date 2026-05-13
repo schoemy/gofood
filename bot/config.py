@@ -22,9 +22,7 @@ class Settings:
 
     # ───── Exchange (ccxt) ─────
     exchange_id: str = os.getenv("EXCHANGE_ID", "kraken")
-    # 'auto' picks the right value per exchange; 'future'/'swap'/'spot' to force
     market_type: str = os.getenv("MARKET_TYPE", "auto")
-    # Fallback chain, tried in order if primary fails (403/timeout/etc.)
     fallback_exchanges: List[str] = field(default_factory=lambda: [
         s.strip() for s in os.getenv(
             "FALLBACK_EXCHANGES",
@@ -33,28 +31,37 @@ class Settings:
     ])
 
     # ───── Scanner ─────
-    # Symbols in ccxt format, e.g. "PYTH/USDT" for spot or "PYTH/USDT:USDT" for perp
     watchlist: List[str] = field(default_factory=lambda: [
         s.strip() for s in os.getenv(
             "WATCHLIST",
-            "BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT,PYTH/USDT:USDT"
+            "BTC/USDT:USDT,ETH/USDT:USDT,BNB/USDT:USDT,SOL/USDT:USDT,PYTH/USDT:USDT"
         ).split(",") if s.strip()
     ])
     timeframes: List[str] = field(default_factory=lambda: [
         s.strip() for s in os.getenv("TIMEFRAMES", "30m,1h,4h").split(",") if s.strip()
     ])
-    # How many candles to fetch per symbol/timeframe
     lookback: int = int(os.getenv("LOOKBACK", "300"))
-    # Poll interval (seconds). 60 is a good default for 30m+ timeframes.
     poll_interval: int = int(os.getenv("POLL_INTERVAL", "60"))
 
     # ───── Indicator defaults ─────
     atr_length: int = int(os.getenv("ATR_LENGTH", "10"))
     atr_mult: float = float(os.getenv("ATR_MULT", "3.0"))
+
+    # RSI filter
     rsi_length: int = int(os.getenv("RSI_LENGTH", "14"))
     rsi_long_min: float = float(os.getenv("RSI_LONG_MIN", "50"))
     rsi_short_max: float = float(os.getenv("RSI_SHORT_MAX", "50"))
     use_rsi_filter: bool = os.getenv("USE_RSI_FILTER", "true").lower() == "true"
+
+    # MACD confluence filter
+    use_macd_filter: bool = os.getenv("USE_MACD_FILTER", "false").lower() == "true"
+    macd_fast: int = int(os.getenv("MACD_FAST", "12"))
+    macd_slow: int = int(os.getenv("MACD_SLOW", "26"))
+    macd_signal: int = int(os.getenv("MACD_SIGNAL", "9"))
+
+    # EMA 200 trend confluence filter
+    use_ema_filter: bool = os.getenv("USE_EMA_FILTER", "false").lower() == "true"
+    ema_length: int = int(os.getenv("EMA_LENGTH", "200"))
 
     # TP multipliers (× ATR) and SL
     tp_multipliers: List[float] = field(default_factory=lambda: [
@@ -62,7 +69,7 @@ class Settings:
     ])
     sl_multiplier: float = float(os.getenv("SL_MULTIPLIER", "1.5"))
 
-    # Pre-signal distance threshold (× ATR)
+    # Pre-signal
     pre_signal_threshold: float = float(os.getenv("PRE_SIGNAL_THRESHOLD", "0.3"))
     enable_pre_signal: bool = os.getenv("ENABLE_PRE_SIGNAL", "true").lower() == "true"
 

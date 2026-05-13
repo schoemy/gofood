@@ -75,6 +75,7 @@ class Settings:
 
     # ───── State / dedup ─────
     state_file: str = os.getenv("STATE_FILE", "bot_state.json")
+    ledger_file: str = os.getenv("LEDGER_FILE", "bot_ledger.json")
 
 
 settings = Settings()

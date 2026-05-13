@@ -41,6 +41,10 @@ let SKIP_IF_HIGH_GTE = 1;        // skip kalau >=1 HIGH player (0.0001-0.0003)
 let SKIP_IF_BOARD_USD = 5.0;     // skip kalau board > $5
 let SKIP_IF_PLAYER_GT = 50;      // skip kalau player > 50
 
+// === DEPLOY MODE ===
+let deployMode = 'all';          // 'all' = 25 blok | 'skip' = skip prev winning block (24 blok)
+let prevWinningBlock = -1;       // tracked dari API ronde sebelumnya
+
 // === TIMING ===
 const SNAPSHOT_AT = 55;          // detik 55 = ambil snapshot
 const DEPLOY_AT = 6;             // deploy saat timeRemaining = 6 detik
@@ -166,6 +170,13 @@ async function getAdaptiveFee({ boardEth = 0, gasLimit = 1000000n } = {}) {
 async function takeSnapshot(roundId) {
   try {
     const res = await axios.get(`${MINEBEAN_API}/api/round/${roundId}/miners`, { timeout: 4000 });
+
+    // Track winning block dari ronde sebelumnya (kalau API kasih)
+    if (res.data?.winningBlock != null) {
+      const wb = Number(res.data.winningBlock);
+      if (wb >= 0 && wb <= 24) prevWinningBlock = wb;
+    }
+
     let miners = res.data?.miners || res.data?.data?.miners || res.data?.data || res.data;
     if (!Array.isArray(miners) && miners && typeof miners === 'object') miners = Object.values(miners);
     if (!Array.isArray(miners)) miners = [];
@@ -349,9 +360,15 @@ async function executeDeploy(decision) {
     preDeployB = preR[1] + preR[2];
     preDeployETH = preR[0];
 
-    // Deploy ALL 25 blok
-    const blockIds = Array.from({ length: 25 }, (_, i) => i);
-    const totalBet = decision.betPerBlockWei * 25n;
+    // === Tentukan block IDs sesuai deployMode ===
+    let blockIds = Array.from({ length: 25 }, (_, i) => i);
+    let modeUsed = 'ALL (25 blok)';
+    if (deployMode === 'skip' && prevWinningBlock >= 0 && prevWinningBlock <= 24) {
+      blockIds = blockIds.filter(b => b !== prevWinningBlock);
+      modeUsed = `SKIP (24 blok, skip blok ${prevWinningBlock})`;
+    }
+
+    const totalBet = decision.betPerBlockWei * BigInt(blockIds.length);
     lastRoundBet = totalBet;
 
     const gas = await getAdaptiveFee({ boardEth: decision.snapshot.totalBoardEth });
@@ -363,8 +380,8 @@ async function executeDeploy(decision) {
       maxPriorityFeePerGas: gas.maxPriorityFeePerGas,
     });
 
-    console.log(`🔥 DEPLOY tx sent: ${tx.hash.slice(0, 18)}...`);
-    await tg(`🔥 *DEPLOYED R#${decision.snapshot.roundId}*\nBet: ${decision.betPerBlockEth.toFixed(6)}/blok ($${decision.totalUsd.toFixed(2)})\n\`${tx.hash.slice(0, 20)}...\``);
+    console.log(`🔥 DEPLOY tx sent: ${tx.hash.slice(0, 18)}... [${modeUsed}]`);
+    await tg(`🔥 *DEPLOYED R#${decision.snapshot.roundId}*\nMode: ${modeUsed}\nBet: ${decision.betPerBlockEth.toFixed(6)}/blok × ${blockIds.length} = ${(decision.betPerBlockEth * blockIds.length).toFixed(6)} ETH ($${(decision.betPerBlockEth * blockIds.length * currentEthPriceUsd).toFixed(2)})\n\`${tx.hash.slice(0, 20)}...\``);
 
     const rc = await tx.wait();
     played = rc?.status === 1;
@@ -448,6 +465,7 @@ bot.onText(/\/status/, async (msg) => {
     `💰 Total: *$${totalUsd.toFixed(2)}*`,
     ``,
     `*Settings:*`,
+    `Deploy Mode  : ${deployMode.toUpperCase()}${deployMode==='skip'?` (skip blok ${prevWinningBlock})`:''}`,
     `Budget/ronde: $${(parseFloat(ethers.formatEther(BUDGET_PER_RONDE)) * currentEthPriceUsd).toFixed(2)}`,
     `Bet/blok min: ${ethers.formatEther(MIN_BET_PER_BLOCK)}`,
     `Bet/blok max: ${ethers.formatEther(MAX_BET_PER_BLOCK)}`,
@@ -507,6 +525,20 @@ bot.onText(/\/skipboard (.+)/, (msg, m) => {
   if (v > 0) { SKIP_IF_BOARD_USD = v; tg(`✅ Skip if board > $${v}`); }
 });
 
+bot.onText(/\/mode (.+)/, (msg, m) => {
+  if (!isOwner(msg)) return;
+  const v = m[1].trim().toLowerCase();
+  if (v === 'all') {
+    deployMode = 'all';
+    tg(`✅ *DEPLOY MODE* ➡️ *ALL (25 blok)*`);
+  } else if (v === 'skip') {
+    deployMode = 'skip';
+    tg(`✅ *DEPLOY MODE* ➡️ *SKIP (24 blok, prev winner: ${prevWinningBlock})*`);
+  } else {
+    tg(`❌ Format: /mode all atau /mode skip`);
+  }
+});
+
 bot.onText(/\/resume/, (msg) => {
   if (!isOwner(msg)) return;
   stopped = false;
@@ -533,6 +565,8 @@ bot.onText(/\/help/, (msg) => {
     `/status - status & saldo`,
     `/setbudget [USD] - budget per ronde`,
     `/setminmodal [USD] - min modal stop-loss`,
+    `/mode all - deploy 25 blok`,
+    `/mode skip - skip prev winning block (24 blok)`,
     `/skipwhale on/off`,
     `/skiphigh [N] - skip if HIGH count >= N`,
     `/skipboard [USD] - skip if board > USD`,

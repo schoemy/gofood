@@ -215,6 +215,8 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger") -> 
                     ema_length=settings.ema_length,
                     tp_multipliers=settings.tp_multipliers,
                     sl_multiplier=settings.sl_multiplier,
+                    sl_mode=settings.sl_mode,
+                    sl_buffer_atr=settings.sl_buffer_atr,
                     pre_signal_threshold=settings.pre_signal_threshold,
                     enable_pre_signal=settings.enable_pre_signal,
                 )

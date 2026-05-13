@@ -78,32 +78,44 @@ def fetch_ohlcv(exchange, symbol: str, timeframe: str, limit: int) -> pd.DataFra
 # ─────────────────────────── Scan loop ────────────────────────────────
 
 def scan_once(exchange, sent_keys: Set[str]) -> None:
+    scanned = 0
+    errors = 0
+    signals = 0
     for symbol in settings.watchlist:
         for tf in settings.timeframes:
             try:
                 df = fetch_ohlcv(exchange, symbol, tf, settings.lookback)
+                scanned += 1
             except Exception as e:
+                errors += 1
                 log.warning("fetch %s %s failed: %s", symbol, tf, e)
                 continue
 
-            sig: Signal = analyze(
-                df, symbol, tf,
-                atr_length=settings.atr_length,
-                atr_mult=settings.atr_mult,
-                rsi_length=settings.rsi_length,
-                use_rsi_filter=settings.use_rsi_filter,
-                rsi_long_min=settings.rsi_long_min,
-                rsi_short_max=settings.rsi_short_max,
-                tp_multipliers=settings.tp_multipliers,
-                sl_multiplier=settings.sl_multiplier,
-                pre_signal_threshold=settings.pre_signal_threshold,
-                enable_pre_signal=settings.enable_pre_signal,
-            )
+            try:
+                sig: Signal = analyze(
+                    df, symbol, tf,
+                    atr_length=settings.atr_length,
+                    atr_mult=settings.atr_mult,
+                    rsi_length=settings.rsi_length,
+                    use_rsi_filter=settings.use_rsi_filter,
+                    rsi_long_min=settings.rsi_long_min,
+                    rsi_short_max=settings.rsi_short_max,
+                    tp_multipliers=settings.tp_multipliers,
+                    sl_multiplier=settings.sl_multiplier,
+                    pre_signal_threshold=settings.pre_signal_threshold,
+                    enable_pre_signal=settings.enable_pre_signal,
+                )
+            except Exception as e:
+                errors += 1
+                log.warning("analyze %s %s failed: %s", symbol, tf, e)
+                continue
+
             if sig is None:
                 continue
             if sig.key in sent_keys:
                 continue
 
+            signals += 1
             log.info("SIGNAL %s %s %s @ %.5f", sig.symbol, sig.timeframe,
                      sig.direction, sig.entry)
             ok = telegram.send_signal(
@@ -114,6 +126,9 @@ def scan_once(exchange, sent_keys: Set[str]) -> None:
             if ok:
                 sent_keys.add(sig.key)
                 save_state(settings.state_file, sent_keys)
+
+    log.info("Scan complete: %d pairs scanned, %d signals, %d errors",
+             scanned, signals, errors)
 
 
 def main():

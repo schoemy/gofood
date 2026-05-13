@@ -6,6 +6,10 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:   # tombol "Run workflow" manual
 
+# Hilangkan warning Node 20 deprecation (opt-in Node 24)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -20,7 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
+          pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
 
       - name: Restore scanner state (anti-spam)
@@ -34,7 +38,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          EXCHANGE_ID: binance
+          # Bybit dipakai karena Binance geoblock IP US (GitHub runner = US)
+          EXCHANGE_ID: bybit
           MARKET_TYPE: future
           WATCHLIST: "BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT,PYTH/USDT:USDT"
           TIMEFRAMES: "30m,1h,4h"

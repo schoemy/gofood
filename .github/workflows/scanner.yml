@@ -63,7 +63,7 @@ jobs:
           MACD_FAST: "12"
           MACD_SLOW: "26"
           MACD_SIGNAL: "9"
-          USE_EMA_FILTER: "true"
+          USE_EMA_FILTER: "false"
           EMA_LENGTH: "200"
           # ── Stop-loss: trend-line based (exit only when Supertrend flips) ──
           # Mode lain: "atr" (SL ketat ± sl_multiplier×ATR) | "max" (aman, mana yang lebih jauh)

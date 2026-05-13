@@ -65,6 +65,10 @@ jobs:
           MACD_SIGNAL: "9"
           USE_EMA_FILTER: "true"
           EMA_LENGTH: "200"
+          # ── Stop-loss: trend-line based (exit only when Supertrend flips) ──
+          # Mode lain: "atr" (SL ketat ± sl_multiplier×ATR) | "max" (aman, mana yang lebih jauh)
+          SL_MODE: "trendline"
+          SL_BUFFER_ATR: "0.3"
           # Need enough history for EMA 200 + MACD warmup
           LOOKBACK: "500"
         run: python -m bot.scanner --once

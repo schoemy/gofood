@@ -68,6 +68,11 @@ class Settings:
         float(x) for x in os.getenv("TP_MULTIPLIERS", "1,2,3,4").split(",")
     ])
     sl_multiplier: float = float(os.getenv("SL_MULTIPLIER", "1.5"))
+    # SL mode: "trendline" (default, exit only on Supertrend flip) |
+    #          "atr" (tight, entry ± sl_multiplier*ATR) |
+    #          "max" (safest, farther of the two)
+    sl_mode: str = os.getenv("SL_MODE", "trendline")
+    sl_buffer_atr: float = float(os.getenv("SL_BUFFER_ATR", "0.3"))
 
     # Pre-signal
     pre_signal_threshold: float = float(os.getenv("PRE_SIGNAL_THRESHOLD", "0.3"))

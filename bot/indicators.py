@@ -164,6 +164,11 @@ def analyze(
     # ── Take-profit / stop-loss ──
     tp_multipliers: Optional[List[float]] = None,
     sl_multiplier: float = 1.5,
+    # SL mode: "atr"      = SL = entry ± sl_multiplier×ATR  (legacy, tight)
+    #          "trendline" = SL = trend-line ± sl_buffer×ATR (only exit on flip)
+    #          "max"      = SL = farther of the two (safest)
+    sl_mode: str = "trendline",
+    sl_buffer_atr: float = 0.3,
     # ── Pre-signal ──
     pre_signal_threshold: float = 0.3,
     enable_pre_signal: bool = True,
@@ -237,7 +242,26 @@ def analyze(
         sign = 1 if direction.endswith("LONG") else -1
         entry = close
         tps = [entry + sign * m * atr for m in tp_multipliers]
-        sl = entry - sign * sl_multiplier * atr
+
+        # ── Stop-loss: three modes ──
+        # ATR-only: legacy behavior, tight SL close to entry
+        sl_atr = entry - sign * sl_multiplier * atr
+        # Trend-line-based: exit only when Supertrend would flip
+        #   SHORT → SL above trend-line, LONG → SL below trend-line
+        sl_trend = trend + sign * (-1) * sl_buffer_atr * atr
+        # Note: for SHORT (sign=-1), sign*-1 = +1 → SL = trend + buffer (above)
+        # for LONG (sign=+1), sign*-1 = -1 → SL = trend - buffer (below)
+
+        if sl_mode == "atr":
+            sl = sl_atr
+        elif sl_mode == "trendline":
+            sl = sl_trend
+        else:  # "max" → farther from entry (safer, bigger loss if hit)
+            if sign == -1:  # SHORT: SL is above entry, pick the higher
+                sl = max(sl_atr, sl_trend)
+            else:           # LONG: SL is below entry, pick the lower
+                sl = min(sl_atr, sl_trend)
+
         label = direction if not is_pre else f"PRE_{direction}"
         ts = last.name if isinstance(last.name, pd.Timestamp) else pd.Timestamp(last.name)
         return Signal(

@@ -72,6 +72,10 @@ const CFG = {
     SATELIT_SCAN_LIMIT: 50,
     SATELIT_LOTRE_MIN_BEAN: 0.9,
     SATELIT_RESPECT_MANUAL_SEC: 30,    // satelit tidak override setmax manual < 30s terakhir
+
+    // Pool-Percentage Radar (bet = X% total pool ronde sebelumnya)
+    POOL_PCT_MIN: 0.10,    // 10% dari total pool
+    POOL_PCT_MAX: 0.15,    // 15% dari total pool (random antara MIN-MAX tiap ronde)
 };
 
 const FLAGS = {
@@ -161,6 +165,8 @@ const STATE = {
     // Mode & block
     deployMode: 'random',
     prevWinningBlock: -1,
+    radarMode: 'pool',  // 'node' = heavy-node snipe (v14.1), 'pool' = % dari total pool (v15+)
+    lastPoolTotalEth: 0, // total pool ronde sebelumnya (dipakai mode pool)
 
     // RPC health
     consecutiveRpcErrors: 0,
@@ -585,6 +591,14 @@ async function updateStrategyFromPreviousRound(roundId) {
             };
             return;
         }
+
+        // MODE POOL: bet = 10-15% total pool ronde sebelumnya
+        if (STATE.radarMode === 'pool') {
+            await buildPoolPctDecision(roundId);
+            return;
+        }
+
+        // MODE NODE: heavy-node snipe (v14.1 logic)
         const decision = await buildBobotDecision(roundId, { notify: false });
         STATE.nextRoundStrategy = {
             mode: decision.mode,
@@ -608,6 +622,92 @@ async function updateStrategyFromPreviousRound(roundId) {
             reason: `Radar error: ${e.message}`,
         };
     }
+}
+
+// =============================================================
+// POOL PERCENTAGE RADAR — bet = 10-15% total pool ronde sebelumnya
+// Logika: ambil totalDeployed dari ronde lalu, kalkulasi bet total
+// sebagai % dari pool tsb, lalu bagi rata ke jumlah block yang dideploy.
+// =============================================================
+async function buildPoolPctDecision(roundId) {
+    // Ambil summary ronde (untuk winning block + totalDeployed)
+    let poolEth = 0;
+    try {
+        const sumRes = await axios.get(`${MINEBEAN_API}/api/round/${roundId}`, { timeout: 5000 });
+        const data = sumRes.data?.data || sumRes.data;
+
+        // Winning block
+        const wb = data?.winningBlock;
+        if (wb != null && wb >= 0 && wb <= 24) {
+            STATE.prevWinningBlock = Number(wb);
+        }
+
+        // Total pool dari ronde ini
+        const totalRaw = data?.totalDeployedFormatted || data?.totalDeployed;
+        if (totalRaw) {
+            poolEth = parseFloat(String(totalRaw).includes('.') ? totalRaw : ethers.formatEther(BigInt(totalRaw)));
+        }
+    } catch (e) {
+        console.warn(`⚠️ [POOL] Gagal ambil data ronde #${roundId}:`, e.message);
+    }
+
+    // Kalau pool 0 (ronde kosong), fallback ke default bet
+    if (poolEth <= 0) {
+        STATE.lastPoolTotalEth = 0;
+        STATE.nextRoundStrategy = {
+            mode: 'POOL_PCT',
+            recommendedBet: CFG.DEFAULT_BET_PER_BLOCK,
+            shouldDeploy: true,
+            source: 'POOL_ENGINE',
+            reason: `Pool ronde #${roundId} kosong/error, pakai base bet.`,
+        };
+        return;
+    }
+
+    STATE.lastPoolTotalEth = poolEth;
+
+    // Random % antara POOL_PCT_MIN dan POOL_PCT_MAX (10-15%)
+    const pctUsed = CFG.POOL_PCT_MIN + Math.random() * (CFG.POOL_PCT_MAX - CFG.POOL_PCT_MIN);
+    const totalBetEth = poolEth * pctUsed;
+
+    // Bagi ke jumlah block yang akan di-deploy
+    let blockCount = 25;
+    if (STATE.deployMode === 'skip' || STATE.deployMode === 'random') blockCount = 24;
+
+    const betPerBlockEth = totalBetEth / blockCount;
+    let recommendedBet = ethers.parseEther(betPerBlockEth.toFixed(18));
+
+    // Floor: jangan di bawah DEFAULT_BET
+    if (recommendedBet < CFG.DEFAULT_BET_PER_BLOCK) {
+        recommendedBet = CFG.DEFAULT_BET_PER_BLOCK;
+    }
+
+    // Ceiling: jangan di atas HARD_MAX_SAFETY
+    let capped = false;
+    if (recommendedBet > CFG.HARD_MAX_SAFETY) {
+        recommendedBet = CFG.HARD_MAX_SAFETY;
+        capped = true;
+    }
+
+    const reason =
+        `Pool R#${roundId}: ${poolEth.toFixed(6)} ETH. ` +
+        `Bet ${(pctUsed * 100).toFixed(1)}% = ${totalBetEth.toFixed(6)} ETH total ` +
+        `(÷${blockCount} blk = ${betPerBlockEth.toFixed(6)}/blk)` +
+        (capped ? ' [CAPPED]' : '');
+
+    STATE.nextRoundStrategy = {
+        mode: 'POOL_PCT',
+        recommendedBet,
+        shouldDeploy: true,
+        source: 'POOL_ENGINE',
+        reason,
+    };
+
+    console.log(
+        `📊 Pool Radar R#${roundId}: pool=${poolEth.toFixed(6)} | ` +
+        `pct=${(pctUsed * 100).toFixed(1)}% | ` +
+        `bet/blk=${ethers.formatEther(recommendedBet)}`
+    );
 }
 
 // =============================================================
@@ -840,6 +940,34 @@ bot.onText(/\/mode (.+)/, (msg, m) => {
     }
 });
 
+bot.onText(/\/setradar (.+)/, (msg, m) => {
+    if (!isOwner(msg)) return;
+    const v = m[1].trim().toLowerCase();
+    if (v === 'pool') {
+        STATE.radarMode = 'pool';
+        tg(`✅ *RADAR MODE* ➡️ *POOL PCT*\nBet = ${(CFG.POOL_PCT_MIN*100).toFixed(0)}-${(CFG.POOL_PCT_MAX*100).toFixed(0)}% dari total pool ronde sebelumnya.`);
+    } else if (v === 'node') {
+        STATE.radarMode = 'node';
+        tg(`✅ *RADAR MODE* ➡️ *HEAVY NODE*\nBet = +${(CFG.MARGIN_LINDAS_PCT*100).toFixed(0)}% dari nominal terberat.`);
+    } else {
+        tg(`❌ Format salah. Gunakan: /setradar pool atau /setradar node`);
+    }
+});
+
+bot.onText(/\/setpoolpct (.+)/, (msg, m) => {
+    if (!isOwner(msg)) return;
+    const parts = m[1].trim().split(/\s+/);
+    const minPct = parseFloat(parts[0]);
+    const maxPct = parts.length > 1 ? parseFloat(parts[1]) : minPct;
+    if (isNaN(minPct) || isNaN(maxPct) || minPct <= 0 || maxPct <= 0 || minPct > maxPct || maxPct > 1) {
+        tg(`❌ Format salah. Contoh: /setpoolpct 0.10 0.15\n(min max, dalam desimal. 0.10 = 10%, 0.15 = 15%)`);
+        return;
+    }
+    CFG.POOL_PCT_MIN = minPct;
+    CFG.POOL_PCT_MAX = maxPct;
+    tg(`✅ *POOL PCT* ➡️ *${(minPct*100).toFixed(1)}% — ${(maxPct*100).toFixed(1)}%*\nBet total = random antara ${(minPct*100).toFixed(1)}-${(maxPct*100).toFixed(1)}% pool ronde sebelumnya.`);
+});
+
 bot.onText(/\/bobot/, async (msg) => {
     if (!isOwner(msg)) return;
     try {
@@ -879,8 +1007,10 @@ bot.onText(/\/status/, (msg) => {
         '',
         '*Volume Engine:*',
         `🛰️ *Satelit Mode:* ${FLAGS.ENABLE_SATELIT ? 'ON' : 'OFF'}`,
-        `🧠 *Mode:* ${safe(STATE.nextRoundStrategy?.mode)}`,
+        `📡 *Radar Mode:* ${STATE.radarMode.toUpperCase()} ${STATE.radarMode === 'pool' ? `(${(CFG.POOL_PCT_MIN*100).toFixed(0)}-${(CFG.POOL_PCT_MAX*100).toFixed(0)}% pool)` : `(+${(CFG.MARGIN_LINDAS_PCT*100).toFixed(0)}% heavy node)`}`,
+        `🧠 *Strategy:* ${safe(STATE.nextRoundStrategy?.mode)}`,
         `✅ *Aman Tembak:* ${STATE.nextRoundStrategy?.shouldDeploy ? 'YES' : 'NO'}`,
+        `📊 *Last Pool:* ${STATE.lastPoolTotalEth ? STATE.lastPoolTotalEth.toFixed(6) + ' ETH' : '-'}`,
         `🧾 *Reason:* ${safe(STATE.nextRoundStrategy?.reason)}`,
         '',
         '*Anti Loss:*',

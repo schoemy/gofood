@@ -1,0 +1,12 @@
+{
+  "name": "sniper-minebean",
+  "version": "2.0.0",
+  "description": "MineBean Auto-Strategy Sniper Bot (4 Strategies)",
+  "main": "sniper.js",
+  "scripts": {
+    "start": "node sniper.js",
+    "demo": "DEMO_MODE=1 node sniper.js --demo"
+  },
+  "author": "schoemy",
+  "license": "ISC"
+}

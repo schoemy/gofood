@@ -1,0 +1,44 @@
+name: GG-Shot Signal Scanner
+
+on:
+  schedule:
+    # Jalan setiap 15 menit
+    - cron: "*/15 * * * *"
+  workflow_dispatch:   # tombol "Run workflow" manual
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore scanner state (anti-spam)
+        uses: actions/cache@v4
+        with:
+          path: bot_state.json
+          key: ggshot-state-${{ github.run_id }}
+          restore-keys: ggshot-state-
+
+      - name: Run scanner once
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EXCHANGE_ID: binance
+          MARKET_TYPE: future
+          WATCHLIST: "BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT,PYTH/USDT:USDT"
+          TIMEFRAMES: "30m,1h,4h"
+          ATR_LENGTH: "10"
+          ATR_MULT: "3.0"
+          USE_RSI_FILTER: "true"
+        run: python -m bot.scanner --once

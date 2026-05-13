@@ -1,0 +1,141 @@
+//@version=5
+// =============================================================================
+// GG-Shøt Clone — Multi-Target Signal Indicator
+// =============================================================================
+// Teknik: Supertrend (ATR Trailing Stop) sebagai trend filter,
+//         ATR-based Take Profit 1-4, Trailing SL, dan pre-signal warning.
+// Cocok buat: crypto perpetual (PYTH/BTC/ETH dll), timeframe 15m-4h.
+// =============================================================================
+
+indicator("GG-Shøt Clone [Multi-TP]", overlay = true, max_labels_count = 200)
+
+// ───────────────────────────── INPUTS ─────────────────────────────
+grpTrend = "Trend Engine"
+atrLen   = input.int(10,   "ATR Length",      minval = 1,  group = grpTrend)
+atrMult  = input.float(3.0,"ATR Multiplier",  minval = 0.1, step = 0.1, group = grpTrend)
+useHA    = input.bool(false,"Pakai Heikin-Ashi (lebih smooth)", group = grpTrend)
+
+grpTP = "Take Profit / Stop Loss"
+tp1R  = input.float(1.0, "TP1 (× ATR)", step = 0.5, group = grpTP)
+tp2R  = input.float(2.0, "TP2 (× ATR)", step = 0.5, group = grpTP)
+tp3R  = input.float(3.0, "TP3 (× ATR)", step = 0.5, group = grpTP)
+tp4R  = input.float(4.0, "TP4 (× ATR)", step = 0.5, group = grpTP)
+slR   = input.float(1.5, "Stop Loss (× ATR)", step = 0.1, group = grpTP)
+
+grpSig = "Filter Sinyal"
+useRSI   = input.bool(true, "Pakai filter RSI", group = grpSig)
+rsiLen   = input.int(14, "RSI Length", group = grpSig)
+rsiLong  = input.int(50, "RSI min untuk LONG",  group = grpSig)
+rsiShort = input.int(50, "RSI max untuk SHORT", group = grpSig)
+
+grpUI = "Tampilan"
+showZones = input.bool(true, "Tampilkan area trend",   group = grpUI)
+showTP    = input.bool(true, "Tampilkan garis TP/SL",  group = grpUI)
+showPre   = input.bool(true, "Tampilkan pre-signal",   group = grpUI)
+
+// ───────────────────────────── SOURCE ─────────────────────────────
+src = useHA ? request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close) : close
+atr = ta.atr(atrLen)
+rsi = ta.rsi(close, rsiLen)
+
+// ───────────────────────────── SUPERTREND ─────────────────────────
+// Ini adalah inti dari "GG-Shøt trend line"
+[supertrend, direction] = ta.supertrend(atrMult, atrLen)
+
+// Flip detection
+flipLong  = direction < 0 and direction[1] >= 0
+flipShort = direction > 0 and direction[1] <= 0
+
+// Filter RSI
+longOk  = not useRSI or rsi > rsiLong
+shortOk = not useRSI or rsi < rsiShort
+
+longSignal  = flipLong  and longOk
+shortSignal = flipShort and shortOk
+
+// ───────────────────────────── PRE-SIGNAL ─────────────────────────
+// "Get ready to short / long" — harga mendekati trend line (< 0.3 × ATR)
+preShort = direction < 0 and (supertrend - close) < atr * 0.3 and not shortSignal
+preLong  = direction > 0 and (close - supertrend) < atr * 0.3 and not longSignal
+
+// ───────────────────────────── TP/SL LEVELS ───────────────────────
+var float entryPrice = na
+var int   entryDir   = 0      // 1 = long, -1 = short
+var float entryAtr   = na
+
+if longSignal
+    entryPrice := close
+    entryDir   := 1
+    entryAtr   := atr
+if shortSignal
+    entryPrice := close
+    entryDir   := -1
+    entryAtr   := atr
+
+tp1 = entryDir == 1 ? entryPrice + entryAtr * tp1R : entryPrice - entryAtr * tp1R
+tp2 = entryDir == 1 ? entryPrice + entryAtr * tp2R : entryPrice - entryAtr * tp2R
+tp3 = entryDir == 1 ? entryPrice + entryAtr * tp3R : entryPrice - entryAtr * tp3R
+tp4 = entryDir == 1 ? entryPrice + entryAtr * tp4R : entryPrice - entryAtr * tp4R
+sl  = entryDir == 1 ? entryPrice - entryAtr * slR  : entryPrice + entryAtr * slR
+
+// ───────────────────────────── PLOTTING ───────────────────────────
+trendColor = direction < 0 ? color.new(color.red, 0) : color.new(color.teal, 0)
+plot(supertrend, "Trend Line", color = trendColor, linewidth = 2)
+
+// Area fill
+bgHi = showZones ? (direction < 0 ? high * 1.02 : na) : na
+bgLo = showZones ? (direction > 0 ? low  * 0.98 : na) : na
+fill(plot(supertrend, display = display.none), plot(bgHi, display = display.none), color = color.new(color.red,  90))
+fill(plot(supertrend, display = display.none), plot(bgLo, display = display.none), color = color.new(color.teal, 90))
+
+// Entry markers
+plotshape(longSignal,  "LONG",  shape.triangleup,   location.belowbar, color.teal, text = "LONG",  textcolor = color.white, size = size.small)
+plotshape(shortSignal, "SHORT", shape.triangledown, location.abovebar, color.red,  text = "SHORT", textcolor = color.white, size = size.small)
+
+// Pre-signal
+plotshape(showPre and preLong,  "Get ready to long",  shape.labelup,   location.belowbar, color.new(color.teal, 30), text = "▲ Get ready to long",  textcolor = color.white, size = size.tiny)
+plotshape(showPre and preShort, "Get ready to short", shape.labeldown, location.abovebar, color.new(color.red,  30), text = "▼ Get ready to short", textcolor = color.white, size = size.tiny)
+
+// TP/SL lines
+plot(showTP and entryDir != 0 ? tp1 : na, "TP1", color = color.new(color.red,    40), style = plot.style_linebr)
+plot(showTP and entryDir != 0 ? tp2 : na, "TP2", color = color.new(color.red,    50), style = plot.style_linebr)
+plot(showTP and entryDir != 0 ? tp3 : na, "TP3", color = color.new(color.red,    60), style = plot.style_linebr)
+plot(showTP and entryDir != 0 ? tp4 : na, "TP4", color = color.new(color.red,    70), style = plot.style_linebr)
+plot(showTP and entryDir != 0 ? sl  : na, "SL",  color = color.new(color.yellow, 20), style = plot.style_linebr, linewidth = 2)
+
+// ───────────────────────────── STATS (Win Rate) ───────────────────
+var int totalSig = 0
+var int winSig   = 0
+var float peakAfterEntry = na
+
+if longSignal or shortSignal
+    totalSig += 1
+    peakAfterEntry := entryPrice
+
+if entryDir == 1
+    peakAfterEntry := math.max(nz(peakAfterEntry, entryPrice), high)
+if entryDir == -1
+    peakAfterEntry := math.min(nz(peakAfterEntry, entryPrice), low)
+
+hitTP1 = entryDir == 1 and peakAfterEntry >= tp1 or entryDir == -1 and peakAfterEntry <= tp1
+if hitTP1 and (longSignal[1] or shortSignal[1])
+    winSig += 1
+
+winRate = totalSig > 0 ? (winSig / totalSig) * 100 : 0.0
+
+var table stats = table.new(position.top_right, 2, 4, border_width = 1)
+if barstate.islast
+    table.cell(stats, 0, 0, "GG-Shøt Clone", bgcolor = color.new(color.black, 0), text_color = color.white)
+    table.cell(stats, 1, 0, syminfo.ticker,  bgcolor = color.new(color.black, 0), text_color = color.white)
+    table.cell(stats, 0, 1, "Total Signal", text_color = color.white)
+    table.cell(stats, 1, 1, str.tostring(totalSig), text_color = color.white)
+    table.cell(stats, 0, 2, "Hit TP1",      text_color = color.white)
+    table.cell(stats, 1, 2, str.tostring(winSig),   text_color = color.white)
+    table.cell(stats, 0, 3, "Win Rate",     text_color = color.white)
+    table.cell(stats, 1, 3, str.tostring(winRate, "#.##") + "%", text_color = color.lime)
+
+// ───────────────────────────── ALERTS ─────────────────────────────
+alertcondition(longSignal,  "LONG Signal",  "▲ LONG triggered on " + syminfo.ticker)
+alertcondition(shortSignal, "SHORT Signal", "▼ SHORT triggered on " + syminfo.ticker)
+alertcondition(preLong,     "Pre LONG",     "▲ Get ready to LONG on "  + syminfo.ticker)
+alertcondition(preShort,    "Pre SHORT",    "▼ Get ready to SHORT on " + syminfo.ticker)

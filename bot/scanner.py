@@ -61,10 +61,18 @@ def save_state(path: str, sent: Set[str]) -> None:
 
 def make_exchange():
     klass = getattr(ccxt, settings.exchange_id)
-    params = {"enableRateLimit": True}
-    if settings.market_type == "future":
-        params["options"] = {"defaultType": "future"}
-    return klass(params)
+    params = {"enableRateLimit": True, "timeout": 30000}
+    if settings.market_type in ("future", "swap"):
+        params["options"] = {"defaultType": settings.market_type}
+    ex = klass(params)
+    # Pre-load markets so fetch_ohlcv failures are diagnosable
+    try:
+        ex.load_markets()
+        log.info("Loaded %d markets from %s", len(ex.markets), settings.exchange_id)
+    except Exception as e:
+        log.error("Failed to load markets from %s: %s", settings.exchange_id, e)
+        raise
+    return ex
 
 
 def fetch_ohlcv(exchange, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
@@ -137,10 +145,18 @@ def main():
                         help="Run a single scan then exit (for cron).")
     args = parser.parse_args()
 
+    log.info("ccxt version: %s  pandas version: %s",
+             ccxt.__version__, pd.__version__)
+
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         log.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — signals will only print to stdout.")
 
-    exchange = make_exchange()
+    try:
+        exchange = make_exchange()
+    except Exception:
+        log.exception("Could not initialize exchange — aborting.")
+        sys.exit(1)
+
     log.info("Exchange: %s (%s)  Watchlist: %s  Timeframes: %s",
              settings.exchange_id, settings.market_type,
              settings.watchlist, settings.timeframes)

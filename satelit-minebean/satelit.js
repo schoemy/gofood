@@ -423,13 +423,36 @@ async function jalankanSatelit() {
             `   ↳ ${(pctUsed * 100).toFixed(0)}% dari pool ${poolRef.toFixed(6)} ETH (÷${blockCount} blk = ${betPerBlock.toFixed(6)}/blk)`;
     }
 
-    // --- Gabungkan 3 saran ---
+    // --- 5D. KUASAI SEMUT MICRO: avg bet pemenang kelas < 0.000009, lalu +10% ---
+    let semutMicroText = null;
+    const SEMUT_MICRO_CEILING = 0.000009; // kelas micro-semut (< 9k gwei)
+    const SEMUT_MICRO_MARGIN = 0.10;       // +10% agresivitas
+    const semutWinners = Object.keys(leaderboard)
+        .map((k) => ({ addr: k, ...leaderboard[k], avg: leaderboard[k].totalModal / leaderboard[k].menang }))
+        .filter((p) => p.addr !== CONFIG.MY_ADDRESS && p.avg < SEMUT_MICRO_CEILING && p.avg > 0);
+
+    if (semutWinners.length > 0) {
+        // Hitung rata-rata bet dari semua pemenang kelas Semut Micro
+        const totalAvg = semutWinners.reduce((s, p) => s + p.avg, 0);
+        const avgSemutBet = totalAvg / semutWinners.length;
+        const totalWins = semutWinners.reduce((s, p) => s + p.menang, 0);
+
+        let hitSemut = avgSemutBet * (1 + SEMUT_MICRO_MARGIN);
+        if (hitSemut > CONFIG.HARD_CAP_SETMAX) hitSemut = CONFIG.HARD_CAP_SETMAX;
+
+        semutMicroText =
+            `*🐜 Kuasai Semut:* \`/setmax ${hitSemut.toFixed(6)}\`\n` +
+            `   ↳ Avg bet pemenang Semut (<9k): ${avgSemutBet.toFixed(6)} ETH (${semutWinners.length} pemain, ${totalWins}x win) +10%`;
+    }
+
+    // --- Gabungkan 4 saran ---
     const saranList = [];
     if (heavyNodeText) saranList.push(heavyNodeText);
     if (targetKons) saranList.push(fmtSaran(targetKons, '🛡️ Semut (vs Kons)'));
     if (dominan && dominan.addr !== targetKons?.addr) {
         saranList.push(fmtSaran(dominan, '⚔️ Dominan (vs Whale)'));
     }
+    if (semutMicroText) saranList.push(semutMicroText);
     if (poolPctText) saranList.push(poolPctText);
 
     const saranSetmax =
@@ -478,7 +501,7 @@ async function jalankanSatelit() {
             : '_Belum ada pemenang lotre valid di window ini._',
         ``,
         `========================`,
-        `💡 *KESIMPULAN TAKTIS (3 Strategi):*`,
+        `💡 *KESIMPULAN TAKTIS (4 Strategi):*`,
         saranSetmax,
     ].join('\n');
 

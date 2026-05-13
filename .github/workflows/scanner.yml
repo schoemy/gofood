@@ -34,13 +34,30 @@ jobs:
           key: ggshot-state-${{ github.run_id }}
           restore-keys: ggshot-state-
 
+      - name: Diagnostic - smoke test
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python -c "import sys, ccxt, pandas, numpy, pandas_ta; \
+            print('Python:', sys.version.split()[0]); \
+            print('ccxt:', ccxt.__version__); \
+            print('pandas:', pandas.__version__); \
+            print('numpy:', numpy.__version__); \
+            print('pandas_ta:', pandas_ta.version)"
+          python -c "import ccxt; \
+            ex = ccxt.bybit({'options': {'defaultType': 'swap'}}); \
+            ohlcv = ex.fetch_ohlcv('BTC/USDT:USDT', '30m', limit=5); \
+            print('fetch_ohlcv OK, rows:', len(ohlcv), 'last close:', ohlcv[-1][4])"
+
       - name: Run scanner once
         env:
+          PYTHONUNBUFFERED: "1"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # Bybit dipakai karena Binance geoblock IP US (GitHub runner = US)
           EXCHANGE_ID: bybit
-          MARKET_TYPE: future
+          # 'auto' → scanner akan pilih 'swap' untuk Bybit perp
+          MARKET_TYPE: auto
           WATCHLIST: "BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT,PYTH/USDT:USDT"
           TIMEFRAMES: "30m,1h,4h"
           ATR_LENGTH: "10"

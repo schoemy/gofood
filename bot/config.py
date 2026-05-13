@@ -14,6 +14,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _default_market_type(exchange_id: str, override: str) -> str:
+    """
+    Map MARKET_TYPE to the ccxt option the exchange expects.
+    - Bybit/OKX USDT perpetuals are 'swap', not 'future'
+    - Binance uses 'future' for USDT-M perp
+    """
+    if override and override not in ("auto", ""):
+        return override
+    if exchange_id in ("bybit", "okx", "kucoinfutures", "gate", "bitget"):
+        return "swap"
+    return "future"
+
+
 @dataclass
 class Settings:
     # ───── Telegram ─────
@@ -22,8 +35,11 @@ class Settings:
 
     # ───── Exchange (ccxt) ─────
     exchange_id: str = os.getenv("EXCHANGE_ID", "binance")
-    # Use 'future' for USDT-M perpetuals, 'spot' for spot
-    market_type: str = os.getenv("MARKET_TYPE", "future")
+    # 'auto' picks the right value per exchange; 'future'/'swap'/'spot' to force
+    market_type: str = _default_market_type(
+        os.getenv("EXCHANGE_ID", "binance"),
+        os.getenv("MARKET_TYPE", "auto"),
+    )
 
     # ───── Scanner ─────
     # Symbols in ccxt format, e.g. "PYTH/USDT" for spot or "PYTH/USDT:USDT" for perp

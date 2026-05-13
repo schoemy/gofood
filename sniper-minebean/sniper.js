@@ -37,7 +37,7 @@ const CLASS_HIGH_MAX = 0.000300;
 
 // === SKIP CONDITIONS ===
 let SKIP_IF_WHALE = true;       // skip kalau ada >=1 whale
-let SKIP_IF_HIGH_GTE = 3;        // skip kalau >=3 HIGH player
+let SKIP_IF_HIGH_GTE = 1;        // skip kalau >=1 HIGH player (0.0001-0.0003)
 let SKIP_IF_BOARD_USD = 5.0;     // skip kalau board > $5
 let SKIP_IF_PLAYER_GT = 50;      // skip kalau player > 50
 

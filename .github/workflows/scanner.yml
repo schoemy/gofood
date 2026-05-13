@@ -38,16 +38,21 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
         run: |
-          python -c "import sys, ccxt, pandas, numpy, pandas_ta; \
+          python -c "import sys, ccxt, pandas, numpy; \
             print('Python:', sys.version.split()[0]); \
             print('ccxt:', ccxt.__version__); \
             print('pandas:', pandas.__version__); \
-            print('numpy:', numpy.__version__); \
-            print('pandas_ta:', pandas_ta.version)"
+            print('numpy:', numpy.__version__)"
           python -c "import ccxt; \
             ex = ccxt.bybit({'options': {'defaultType': 'swap'}}); \
             ohlcv = ex.fetch_ohlcv('BTC/USDT:USDT', '30m', limit=5); \
             print('fetch_ohlcv OK, rows:', len(ohlcv), 'last close:', ohlcv[-1][4])"
+          python -c "from bot.indicators import compute_supertrend, compute_rsi; \
+            import pandas as pd, numpy as np; \
+            n=100; idx=pd.date_range('2024-01-01',periods=n,freq='30min'); \
+            c=100+np.cumsum(np.random.default_rng(0).normal(0,1,n)); \
+            df=pd.DataFrame({'open':c,'high':c+1,'low':c-1,'close':c,'volume':1},index=idx); \
+            print('supertrend OK:', compute_supertrend(df,10,3.0).iloc[-1].to_dict())"
 
       - name: Run scanner once
         env:

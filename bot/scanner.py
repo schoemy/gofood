@@ -1,29 +1,27 @@
 """
 GG-Shot Scanner — main entrypoint.
 
-Loops over watchlist × timeframes, pulls OHLCV from the exchange via ccxt,
-runs the indicator engine, and dispatches any fresh signal to Telegram.
-Signals are deduplicated via a local JSON state file.
+Loops over watchlist × timeframes, pulls OHLCV via ccxt, runs the indicator
+engine, and dispatches any fresh signal to Telegram. Signals are deduplicated
+via a local JSON state file.
+
+Exchange selection is resilient: a comma-separated fallback chain is tried in
+order until one works. This matters because many large exchanges (Binance,
+Bybit, OKX) geoblock the AWS US IPs used by GitHub Actions runners.
 
 Usage:
     python -m bot.scanner              # run forever
     python -m bot.scanner --once       # single scan, useful for cron
-
-Environment variables (see .env.example):
-    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-    EXCHANGE_ID (default: binance)
-    WATCHLIST (comma-separated ccxt symbols)
-    TIMEFRAMES (e.g. 30m,1h,4h)
 """
 
 import argparse
 import json
 import logging
-import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Set
+from typing import Iterable, Optional, Set, Tuple
 
 import ccxt
 import pandas as pd
@@ -52,30 +50,110 @@ def load_state(path: str) -> Set[str]:
 
 
 def save_state(path: str, sent: Set[str]) -> None:
-    # Keep at most the most recent 2000 keys to bound file size
     trimmed = list(sent)[-2000:]
     Path(path).write_text(json.dumps({"sent": trimmed}))
 
 
-# ─────────────────────────── Exchange helper ──────────────────────────
+# ─────────────────────────── Exchange helpers ─────────────────────────
 
-def make_exchange():
-    klass = getattr(ccxt, settings.exchange_id)
+# Exchanges that normally accept AWS US IPs (GHA runners). Ordered by
+# reliability & OHLCV coverage. We try them in sequence.
+DEFAULT_FALLBACK_CHAIN = ["kraken", "mexc", "bingx", "bitget", "coinbase"]
+
+# Default market type per exchange. Some exchanges don't have perps for
+# every symbol, so we drop the :USDT suffix and fall back to spot when
+# needed (see normalize_symbol below).
+MARKET_TYPE_BY_EXCHANGE = {
+    "binance": "future",
+    "binanceusdm": "future",
+    "bybit": "swap",
+    "okx": "swap",
+    "kucoinfutures": "swap",
+    "bitget": "swap",
+    "gate": "swap",
+    "mexc": "swap",
+    "bingx": "swap",
+    "kraken": "spot",        # kraken spot has USDT pairs; perps need krakenfutures
+    "coinbase": "spot",
+}
+
+
+def normalize_symbol(symbol: str, exchange_id: str, market_type: str) -> str:
+    """
+    Rewrite ccxt symbol format so spot-only exchanges (kraken/coinbase) work
+    with a perp-style watchlist like 'BTC/USDT:USDT'.
+    """
+    if market_type == "spot" and ":" in symbol:
+        return symbol.split(":")[0]
+    return symbol
+
+
+@dataclass
+class ExchangeHandle:
+    id: str
+    market_type: str
+    client: "ccxt.Exchange"
+
+
+def _try_exchange(exchange_id: str, market_type_override: str) -> Optional[ExchangeHandle]:
+    """Try to initialize + load_markets() for one exchange. Return None on failure."""
+    if not hasattr(ccxt, exchange_id):
+        log.warning("ccxt has no exchange '%s'", exchange_id)
+        return None
+
+    market_type = (
+        market_type_override
+        if market_type_override not in ("auto", "")
+        else MARKET_TYPE_BY_EXCHANGE.get(exchange_id, "spot")
+    )
+
     params = {"enableRateLimit": True, "timeout": 30000}
-    if settings.market_type in ("future", "swap"):
-        params["options"] = {"defaultType": settings.market_type}
-    ex = klass(params)
-    # Pre-load markets so fetch_ohlcv failures are diagnosable
+    if market_type in ("future", "swap"):
+        params["options"] = {"defaultType": market_type}
+
+    klass = getattr(ccxt, exchange_id)
     try:
+        ex = klass(params)
         ex.load_markets()
-        log.info("Loaded %d markets from %s", len(ex.markets), settings.exchange_id)
+        log.info("✓ Exchange OK: %s (%s) — %d markets", exchange_id, market_type, len(ex.markets))
+        return ExchangeHandle(id=exchange_id, market_type=market_type, client=ex)
     except Exception as e:
-        log.error("Failed to load markets from %s: %s", settings.exchange_id, e)
-        raise
-    return ex
+        # Most common reason: 403 CloudFront geoblock. Log short form so chain stays readable.
+        msg = str(e)
+        if len(msg) > 200:
+            msg = msg[:200] + "..."
+        log.warning("✗ Exchange %s (%s) failed: %s", exchange_id, market_type, msg)
+        return None
 
 
-def fetch_ohlcv(exchange, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+def select_exchange() -> ExchangeHandle:
+    """
+    Try EXCHANGE_ID first, then fall through FALLBACK_EXCHANGES.
+    Raises RuntimeError if none work.
+    """
+    tried = []
+    candidates: list[str] = []
+
+    if settings.exchange_id:
+        candidates.append(settings.exchange_id)
+
+    for ex_id in settings.fallback_exchanges or DEFAULT_FALLBACK_CHAIN:
+        if ex_id and ex_id not in candidates:
+            candidates.append(ex_id)
+
+    for ex_id in candidates:
+        tried.append(ex_id)
+        handle = _try_exchange(ex_id, settings.market_type)
+        if handle is not None:
+            return handle
+
+    raise RuntimeError(
+        f"No usable exchange. Tried: {tried}. Most likely cause is "
+        "geoblocking (403 CloudFront) on all candidates."
+    )
+
+
+def fetch_ohlcv(exchange: "ccxt.Exchange", symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
     raw = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(raw, columns=["ts", "open", "high", "low", "close", "volume"])
     df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
@@ -85,14 +163,20 @@ def fetch_ohlcv(exchange, symbol: str, timeframe: str, limit: int) -> pd.DataFra
 
 # ─────────────────────────── Scan loop ────────────────────────────────
 
-def scan_once(exchange, sent_keys: Set[str]) -> None:
+def scan_once(handle: ExchangeHandle, sent_keys: Set[str]) -> None:
     scanned = 0
     errors = 0
     signals = 0
-    for symbol in settings.watchlist:
+
+    for raw_symbol in settings.watchlist:
+        symbol = normalize_symbol(raw_symbol, handle.id, handle.market_type)
+        if symbol not in handle.client.markets:
+            log.info("skip %s: not listed on %s", symbol, handle.id)
+            continue
+
         for tf in settings.timeframes:
             try:
-                df = fetch_ohlcv(exchange, symbol, tf, settings.lookback)
+                df = fetch_ohlcv(handle.client, symbol, tf, settings.lookback)
                 scanned += 1
             except Exception as e:
                 errors += 1
@@ -100,7 +184,7 @@ def scan_once(exchange, sent_keys: Set[str]) -> None:
                 continue
 
             try:
-                sig: Signal = analyze(
+                sig: Optional[Signal] = analyze(
                     df, symbol, tf,
                     atr_length=settings.atr_length,
                     atr_mult=settings.atr_mult,
@@ -118,9 +202,7 @@ def scan_once(exchange, sent_keys: Set[str]) -> None:
                 log.warning("analyze %s %s failed: %s", symbol, tf, e)
                 continue
 
-            if sig is None:
-                continue
-            if sig.key in sent_keys:
+            if sig is None or sig.key in sent_keys:
                 continue
 
             signals += 1
@@ -135,8 +217,8 @@ def scan_once(exchange, sent_keys: Set[str]) -> None:
                 sent_keys.add(sig.key)
                 save_state(settings.state_file, sent_keys)
 
-    log.info("Scan complete: %d pairs scanned, %d signals, %d errors",
-             scanned, signals, errors)
+    log.info("Scan complete on %s: %d pairs scanned, %d signals, %d errors",
+             handle.id, scanned, signals, errors)
 
 
 def main():
@@ -145,31 +227,29 @@ def main():
                         help="Run a single scan then exit (for cron).")
     args = parser.parse_args()
 
-    log.info("ccxt version: %s  pandas version: %s",
-             ccxt.__version__, pd.__version__)
+    log.info("ccxt %s  pandas %s", ccxt.__version__, pd.__version__)
 
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         log.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — signals will only print to stdout.")
 
     try:
-        exchange = make_exchange()
+        handle = select_exchange()
     except Exception:
-        log.exception("Could not initialize exchange — aborting.")
+        log.exception("Could not initialize any exchange — aborting.")
         sys.exit(1)
 
-    log.info("Exchange: %s (%s)  Watchlist: %s  Timeframes: %s",
-             settings.exchange_id, settings.market_type,
-             settings.watchlist, settings.timeframes)
+    log.info("Using exchange: %s (%s)  Watchlist: %s  Timeframes: %s",
+             handle.id, handle.market_type, settings.watchlist, settings.timeframes)
 
     sent_keys = load_state(settings.state_file)
 
     if args.once:
-        scan_once(exchange, sent_keys)
+        scan_once(handle, sent_keys)
         return
 
     while True:
         try:
-            scan_once(exchange, sent_keys)
+            scan_once(handle, sent_keys)
         except KeyboardInterrupt:
             log.info("Interrupted, exiting.")
             sys.exit(0)

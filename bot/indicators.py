@@ -1,15 +1,16 @@
 """
 Indicator engine: Supertrend + ATR take-profit ladder + optional RSI filter.
 
-The logic mirrors the Pine Script GG-Shot clone so signals are consistent
-across TradingView and this Python scanner.
+Implemented in pure pandas/numpy to avoid the pandas-ta packaging mess on PyPI.
+The logic mirrors TradingView's ta.supertrend so signals line up with the
+Pine Script clone.
 """
 
 from dataclasses import dataclass
 from typing import List, Optional
 
+import numpy as np
 import pandas as pd
-import pandas_ta as ta
 
 
 @dataclass
@@ -24,25 +25,101 @@ class Signal:
     atr: float
     rsi: float
     timestamp: pd.Timestamp
-    # Unique key for dedup — includes the candle timestamp so a flip on the
-    # same candle only fires once.
     key: str = ""
 
     def __post_init__(self):
-        self.key = f"{self.symbol}|{self.timeframe}|{self.direction}|{int(self.timestamp.timestamp())}"
+        self.key = (
+            f"{self.symbol}|{self.timeframe}|{self.direction}|"
+            f"{int(self.timestamp.timestamp())}"
+        )
 
 
-def compute_supertrend(df: pd.DataFrame, length: int, multiplier: float) -> pd.DataFrame:
-    """Add supertrend columns. Returns the same df with SUPERT/SUPERTd."""
-    st = ta.supertrend(high=df["high"], low=df["low"], close=df["close"],
-                       length=length, multiplier=multiplier)
-    # pandas_ta columns: SUPERT_{length}_{mult}, SUPERTd_{length}_{mult}
-    supert_col = f"SUPERT_{length}_{multiplier}"
-    direction_col = f"SUPERTd_{length}_{multiplier}"
-    df["supertrend"] = st[supert_col]
-    df["st_dir"] = st[direction_col]   # 1 = uptrend, -1 = downtrend
+# ─────────────────────────── Core indicators ──────────────────────────
+
+def wilder_rma(series: pd.Series, length: int) -> pd.Series:
+    """Wilder's smoothing (RMA) — same as TradingView's ta.rma."""
+    return series.ewm(alpha=1 / length, adjust=False, min_periods=length).mean()
+
+
+def compute_atr(high: pd.Series, low: pd.Series, close: pd.Series,
+                length: int) -> pd.Series:
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return wilder_rma(tr, length)
+
+
+def compute_rsi(close: pd.Series, length: int) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = wilder_rma(gain, length)
+    avg_loss = wilder_rma(loss, length)
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50)
+
+
+def compute_supertrend(df: pd.DataFrame, length: int,
+                       multiplier: float) -> pd.DataFrame:
+    """
+    Supertrend identical to TradingView's ta.supertrend().
+    Adds columns: 'supertrend' (the line) and 'st_dir' (1=up, -1=down).
+    """
+    high, low, close = df["high"], df["low"], df["close"]
+    hl2 = (high + low) / 2.0
+    atr = compute_atr(high, low, close, length)
+
+    upper_basic = hl2 + multiplier * atr
+    lower_basic = hl2 - multiplier * atr
+
+    n = len(df)
+    upper = np.full(n, np.nan)
+    lower = np.full(n, np.nan)
+    direction = np.full(n, 1, dtype=int)
+    supert = np.full(n, np.nan)
+
+    close_arr = close.to_numpy()
+    ub = upper_basic.to_numpy()
+    lb = lower_basic.to_numpy()
+
+    for i in range(n):
+        if i == 0 or np.isnan(ub[i]) or np.isnan(lb[i]):
+            upper[i] = ub[i] if not np.isnan(ub[i]) else np.nan
+            lower[i] = lb[i] if not np.isnan(lb[i]) else np.nan
+            continue
+
+        # Trailing bands — never loosen
+        prev_upper = upper[i - 1] if not np.isnan(upper[i - 1]) else ub[i]
+        prev_lower = lower[i - 1] if not np.isnan(lower[i - 1]) else lb[i]
+
+        upper[i] = min(ub[i], prev_upper) if close_arr[i - 1] <= prev_upper else ub[i]
+        lower[i] = max(lb[i], prev_lower) if close_arr[i - 1] >= prev_lower else lb[i]
+
+        # Direction flip
+        if not np.isnan(supert[i - 1]):
+            if direction[i - 1] == 1 and close_arr[i] < lower[i]:
+                direction[i] = -1
+            elif direction[i - 1] == -1 and close_arr[i] > upper[i]:
+                direction[i] = 1
+            else:
+                direction[i] = direction[i - 1]
+        else:
+            direction[i] = 1 if close_arr[i] > hl2.iloc[i] else -1
+
+        supert[i] = lower[i] if direction[i] == 1 else upper[i]
+
+    df = df.copy()
+    df["atr"] = atr
+    df["supertrend"] = supert
+    df["st_dir"] = direction
     return df
 
+
+# ─────────────────────────── Analyze ──────────────────────────────────
 
 def analyze(
     df: pd.DataFrame,
@@ -60,25 +137,17 @@ def analyze(
     pre_signal_threshold: float = 0.3,
     enable_pre_signal: bool = True,
 ) -> Optional[Signal]:
-    """
-    Analyze the latest CLOSED candle and return a Signal if a flip or
-    pre-signal condition is met. Returns None otherwise.
-
-    Expects a DataFrame indexed by timestamp with columns:
-    open, high, low, close, volume.
-    """
+    """Analyze the latest CLOSED candle. Returns a Signal or None."""
     if tp_multipliers is None:
         tp_multipliers = [1.0, 2.0, 3.0, 4.0]
 
     if len(df) < max(atr_length, rsi_length) + 5:
         return None
 
-    df = df.copy()
-    compute_supertrend(df, atr_length, atr_mult)
-    df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=atr_length)
-    df["rsi"] = ta.rsi(df["close"], length=rsi_length)
+    df = compute_supertrend(df, atr_length, atr_mult)
+    df["rsi"] = compute_rsi(df["close"], rsi_length)
 
-    # Use last CLOSED candle (index -2). The live candle is -1 and still forming.
+    # Use last CLOSED candle (index -2); -1 is still forming
     last = df.iloc[-2]
     prev = df.iloc[-3]
 
@@ -104,6 +173,7 @@ def analyze(
         tps = [entry + sign * m * atr for m in tp_multipliers]
         sl = entry - sign * sl_multiplier * atr
         label = direction if not is_pre else f"PRE_{direction}"
+        ts = last.name if isinstance(last.name, pd.Timestamp) else pd.Timestamp(last.name)
         return Signal(
             symbol=symbol,
             timeframe=timeframe,
@@ -114,20 +184,18 @@ def analyze(
             trend_line=trend,
             atr=atr,
             rsi=rsi,
-            timestamp=last.name if isinstance(last.name, pd.Timestamp) else pd.Timestamp(last.name),
+            timestamp=ts,
         )
 
-    # Hard signals (flip) take priority over pre-signals
+    # Hard flip beats pre-signal
     if flip_long and long_ok:
         return build("LONG")
     if flip_short and short_ok:
         return build("SHORT")
 
     if enable_pre_signal:
-        # Price close to trend line → warning
         dist = abs(close - trend)
-        close_enough = dist < atr * pre_signal_threshold
-        if close_enough:
+        if dist < atr * pre_signal_threshold:
             if direction_now == 1 and long_ok:
                 return build("LONG", is_pre=True)
             if direction_now == -1 and short_ok:

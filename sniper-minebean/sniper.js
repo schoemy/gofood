@@ -15,6 +15,23 @@
 
 'use strict';
 
+// ===================== LOAD .env FILE =====================
+const fs = require('fs');
+const path = require('path');
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  envContent.split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const [key, ...valueParts] = trimmed.split('=');
+      const value = valueParts.join('=').replace(/^["']|["']$/g, '');
+      if (key && value) process.env[key.trim()] = value.trim();
+    }
+  });
+  console.log('✅ .env loaded');
+}
+
 // ===================== CONFIGURATION =====================
 const CONFIG = {
   // Telegram Bot
@@ -1077,23 +1094,63 @@ if (require.main === module) {
     process.env.DEMO_MODE = '1';
     console.log('🎮 Running in DEMO mode...\n');
     bot.start();
-  } else {
-    console.log(cmd.handle('/help'));
-    console.log('\nRun with --demo for simulation, or integrate with Telegram.');
-    console.log('Example: node sniper.js --demo\n');
+  } else if (CONFIG.botToken && CONFIG.botToken !== 'YOUR_BOT_TOKEN') {
+    // ===== TELEGRAM MODE — Auto-connect dari .env =====
+    let Telegraf;
+    try {
+      Telegraf = require('telegraf').Telegraf;
+    } catch (e) {
+      console.error('❌ Package "telegraf" belum di-install.');
+      console.log('   Jalankan: npm install telegraf');
+      console.log('   Atau test dengan: node sniper.js --demo');
+      process.exit(1);
+    }
 
-    // For Telegram integration, use:
-    // const { Telegraf } = require('telegraf');
-    // const tgBot = new Telegraf(CONFIG.botToken);
-    // tgBot.on('text', (ctx) => {
-    //   if (ctx.message.from.username === 'MineBeanBot') {
-    //     bot.handleMineBeanMessage(ctx.message);
-    //   } else {
-    //     const [command, ...args] = ctx.message.text.split(' ');
-    //     const reply = cmd.handle(command, args);
-    //     if (reply) ctx.reply(reply);
-    //   }
-    // });
-    // tgBot.launch();
+    const tgBot = new Telegraf(CONFIG.botToken);
+    console.log('🤖 Telegram bot connecting...');
+    console.log(`   Token: ${CONFIG.botToken.slice(0, 8)}...`);
+    console.log(`   Chat ID: ${CONFIG.chatId || 'auto-detect'}\n`);
+
+    // Handle pesan dari MineBean bot
+    tgBot.on('text', (ctx) => {
+      const msg = ctx.message;
+      const fromBot = msg.from && msg.from.is_bot;
+      const text = msg.text || '';
+
+      // Pesan dari MineBean game bot
+      if (fromBot || text.includes('Round') || text.includes('round') || text.includes('Pool')) {
+        bot.handleMineBeanMessage(msg);
+      }
+
+      // Command dari user
+      if (text.startsWith('/')) {
+        const [command, ...args] = text.split(' ');
+        const reply = cmd.handle(command, args);
+        if (reply) ctx.reply(reply);
+      }
+    });
+
+    // Auto-start snipe
+    tgBot.launch().then(() => {
+      console.log('✅ Telegram bot LIVE — listening for MineBean rounds...');
+      console.log('   Ketik /snipe di chat untuk mulai auto-pilot');
+      console.log('   Ketik /stats untuk lihat statistik\n');
+    }).catch(err => {
+      console.error('❌ Gagal connect Telegram:', err.message);
+      console.log('   Cek BOT_TOKEN di file .env kamu');
+    });
+
+    // Graceful stop
+    process.once('SIGINT', () => { tgBot.stop('SIGINT'); bot.stop('SIGINT'); });
+    process.once('SIGTERM', () => { tgBot.stop('SIGTERM'); bot.stop('SIGTERM'); });
+
+  } else {
+    // No token — show help
+    console.log(cmd.handle('/help'));
+    console.log('\n⚠️  BOT_TOKEN belum di-set di .env');
+    console.log('   Buat file .env dengan isi:');
+    console.log('   BOT_TOKEN=token_bot_telegram_kamu');
+    console.log('   CHAT_ID=chat_id_kamu');
+    console.log('\n   Atau test dengan: node sniper.js --demo\n');
   }
 }

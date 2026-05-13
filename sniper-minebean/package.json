@@ -1,7 +1,7 @@
 {
   "name": "sniper-minebean",
-  "version": "15.0.0",
-  "description": "MineBean 4-Strategy Auto-Select Sniper (on-chain)",
+  "version": "16.0.0",
+  "description": "MineBean Last-Second Real-Time Sniper (Snapshot + Last-second Deploy)",
   "main": "sniper.js",
   "scripts": {
     "start": "node sniper.js"

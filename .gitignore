@@ -1,5 +1,6 @@
 .env
 bot_state.json
+bot_ledger.json
 __pycache__/
 *.pyc
 .venv/

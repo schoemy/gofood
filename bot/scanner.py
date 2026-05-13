@@ -29,6 +29,7 @@ import pandas as pd
 from bot import telegram
 from bot.config import settings
 from bot.indicators import Signal, analyze
+from bot.tracker import Ledger, format_resolution, format_stats, resolve_signal
 
 logging.basicConfig(
     level=logging.INFO,
@@ -163,10 +164,11 @@ def fetch_ohlcv(exchange: "ccxt.Exchange", symbol: str, timeframe: str, limit: i
 
 # ─────────────────────────── Scan loop ────────────────────────────────
 
-def scan_once(handle: ExchangeHandle, sent_keys: Set[str]) -> None:
+def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger") -> None:
     scanned = 0
     errors = 0
     signals = 0
+    resolutions = 0
 
     for raw_symbol in settings.watchlist:
         symbol = normalize_symbol(raw_symbol, handle.id, handle.market_type)
@@ -182,6 +184,19 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str]) -> None:
                 errors += 1
                 log.warning("fetch %s %s failed: %s", symbol, tf, e)
                 continue
+
+            # ── Resolve any previously-open signals for this symbol/tf ──
+            for ts in ledger.open_signals():
+                if ts.symbol != symbol or ts.timeframe != tf:
+                    continue
+                if resolve_signal(ts, df):
+                    resolutions += 1
+                    log.info("RESOLVED %s -> %s", ts.key, ts.status)
+                    telegram.send_message(
+                        settings.telegram_bot_token,
+                        settings.telegram_chat_id,
+                        format_resolution(ts),
+                    )
 
             try:
                 sig: Optional[Signal] = analyze(
@@ -222,9 +237,19 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str]) -> None:
             if ok:
                 sent_keys.add(sig.key)
                 save_state(settings.state_file, sent_keys)
+                ledger.add(sig)
+                ledger.save()
 
-    log.info("Scan complete on %s: %d pairs scanned, %d signals, %d errors",
-             handle.id, scanned, signals, errors)
+    # Persist ledger after resolutions
+    if resolutions > 0:
+        ledger.save()
+
+    stats = ledger.stats()
+    log.info("Scan complete on %s: %d pairs scanned, %d signals, %d resolved, %d errors",
+             handle.id, scanned, signals, resolutions, errors)
+    if stats.get("total", 0) > 0:
+        log.info("Ledger stats: total=%d  TP1+=%d (%.1f%%)  SL=%d",
+                 stats["total"], stats["tp1_plus"], stats["tp1_winrate"], stats["sl"])
 
 
 def main():
@@ -248,14 +273,17 @@ def main():
              handle.id, handle.market_type, settings.watchlist, settings.timeframes)
 
     sent_keys = load_state(settings.state_file)
+    ledger = Ledger(settings.ledger_file)
+    log.info("Loaded ledger: %d total signals, %d still open",
+             len(ledger.signals), len(ledger.open_signals()))
 
     if args.once:
-        scan_once(handle, sent_keys)
+        scan_once(handle, sent_keys, ledger)
         return
 
     while True:
         try:
-            scan_once(handle, sent_keys)
+            scan_once(handle, sent_keys, ledger)
         except KeyboardInterrupt:
             log.info("Interrupted, exiting.")
             sys.exit(0)

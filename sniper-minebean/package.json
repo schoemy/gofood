@@ -1,0 +1,17 @@
+{
+  "name": "sniper-minebean",
+  "version": "15.0.0",
+  "description": "MineBean 4-Strategy Auto-Select Sniper (on-chain)",
+  "main": "sniper.js",
+  "scripts": {
+    "start": "node sniper.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.0",
+    "ethers": "^6.9.0",
+    "axios": "^1.6.0",
+    "node-telegram-bot-api": "^0.64.0"
+  },
+  "author": "schoemy",
+  "license": "ISC"
+}

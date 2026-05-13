@@ -38,6 +38,10 @@ const CONFIG = {
     MARGIN_LINDAS_PCT: 0.15,      // +15% di atas avg lawan (sesuai niat komentar asli)
     HARD_CAP_SETMAX: 0.000250,    // Batas atas absolut setmax (naik untuk cover whale dominan)
     LOTRE_MIN_BEAN: 0.9,          // BEAN reward >= 0.9 dianggap mode "single winner/lotre"
+
+    // Pool-Percentage Radar
+    POOL_PCT_MIN: 0.10,    // 10% dari total pool
+    POOL_PCT_MAX: 0.15,    // 15% dari total pool
 };
 
 // === KATEGORI MODAL (ETH per-wallet, satuan ETH desimal) ===
@@ -348,7 +352,7 @@ async function jalankanSatelit() {
             `   ↳ Break-even bet (edge ~11%): ${(totalEV / 0.11).toFixed(8)} ETH`;
     }
 
-    // --- 5. Leaderboard + saran setmax (dua level: konservatif vs agresif) ---
+    // --- 5. Triple Radar: Heavy Node + Dominan/Semut + Pool % ---
     const topPlayers = Object.keys(leaderboard)
         .map((k) => ({
             addr: k,
@@ -358,10 +362,38 @@ async function jalankanSatelit() {
         .sort((a, b) => b.menang - a.menang)
         .slice(0, 5);
 
-    // Pemain paling dominan (pertimbangkan semua kelas, kecuali Anda)
-    const dominan = topPlayers.find((p) => p.addr !== CONFIG.MY_ADDRESS);
+    // --- 5A. HEAVY NODE: cari titik kumpul nominal terberat dari ronde terakhir ---
+    let heavyNodeText = null;
+    try {
+        const lastRId = String(roundsList[0].roundId || roundsList[0].id);
+        const lastMiners = cache[lastRId] || [];
+        if (lastMiners.length > 0) {
+            const nominalNodes = {};
+            for (const m of lastMiners) {
+                if ((m.address || '') === CONFIG.MY_ADDRESS) continue;
+                const dep = parseFloat(m.deployedFormatted || m.deployed || '0');
+                if (dep <= 0) continue;
+                const key = dep.toFixed(6);
+                if (!nominalNodes[key]) nominalNodes[key] = { bet: dep, count: 0, total: 0 };
+                nominalNodes[key].count++;
+                nominalNodes[key].total += dep;
+            }
+            let heaviest = { bet: 0, count: 0, total: 0 };
+            for (const k in nominalNodes) {
+                if (nominalNodes[k].total > heaviest.total) heaviest = nominalNodes[k];
+            }
+            if (heaviest.bet > 0) {
+                let hitHeavy = heaviest.bet * (1 + CONFIG.MARGIN_LINDAS_PCT);
+                if (hitHeavy > CONFIG.HARD_CAP_SETMAX) hitHeavy = CONFIG.HARD_CAP_SETMAX;
+                heavyNodeText =
+                    `*🏋️ Heavy Node:* \`/setmax ${hitHeavy.toFixed(6)}\`\n` +
+                    `   ↳ Titik kumpul terberat: ${heaviest.bet.toFixed(6)} ETH (${heaviest.count} wlt, bobot ${heaviest.total.toFixed(6)} ETH)`;
+            }
+        }
+    } catch (_) { /* ignore */ }
 
-    // Target konservatif: kelas Semut-Marathon (terjangkau bankroll kecil)
+    // --- 5B. DOMINAN / SEMUT (leaderboard lotre) ---
+    const dominan = topPlayers.find((p) => p.addr !== CONFIG.MY_ADDRESS);
     const targetKons = topPlayers.find(
         (p) => p.addr !== CONFIG.MY_ADDRESS && p.avg < THRESHOLDS.MARATHON_ATAS
     );
@@ -377,11 +409,29 @@ async function jalankanSatelit() {
         );
     };
 
-    const saranList = [];
-    if (targetKons) saranList.push(fmtSaran(targetKons, '🛡️ Konservatif (Semut-Marathon)'));
-    if (dominan && dominan.addr !== targetKons?.addr) {
-        saranList.push(fmtSaran(dominan, '⚔️ Agresif (vs Dominan)'));
+    // --- 5C. POOL %: bet = 10-15% total pool ronde terakhir ---
+    let poolPctText = null;
+    const poolRef = snap ? snap.totalPool : 0;
+    if (poolRef > 0) {
+        const pctUsed = (CONFIG.POOL_PCT_MIN + CONFIG.POOL_PCT_MAX) / 2; // pakai rata-rata untuk saran
+        const totalBet = poolRef * pctUsed;
+        const blockCount = 24; // asumsi mode skip/random
+        let betPerBlock = totalBet / blockCount;
+        if (betPerBlock > CONFIG.HARD_CAP_SETMAX) betPerBlock = CONFIG.HARD_CAP_SETMAX;
+        poolPctText =
+            `*📊 Pool %:* \`/setmax ${betPerBlock.toFixed(6)}\`\n` +
+            `   ↳ ${(pctUsed * 100).toFixed(0)}% dari pool ${poolRef.toFixed(6)} ETH (÷${blockCount} blk = ${betPerBlock.toFixed(6)}/blk)`;
     }
+
+    // --- Gabungkan 3 saran ---
+    const saranList = [];
+    if (heavyNodeText) saranList.push(heavyNodeText);
+    if (targetKons) saranList.push(fmtSaran(targetKons, '🛡️ Semut (vs Kons)'));
+    if (dominan && dominan.addr !== targetKons?.addr) {
+        saranList.push(fmtSaran(dominan, '⚔️ Dominan (vs Whale)'));
+    }
+    if (poolPctText) saranList.push(poolPctText);
+
     const saranSetmax =
         saranList.length > 0
             ? saranList.join('\n\n')
@@ -428,7 +478,7 @@ async function jalankanSatelit() {
             : '_Belum ada pemenang lotre valid di window ini._',
         ``,
         `========================`,
-        `💡 *KESIMPULAN TAKTIS (target +${(CONFIG.MARGIN_LINDAS_PCT * 100).toFixed(0)}%):*`,
+        `💡 *KESIMPULAN TAKTIS (3 Strategi):*`,
         saranSetmax,
     ].join('\n');
 

@@ -305,7 +305,7 @@ async function sendSnapshotReport(decision) {
   if (!s) return;
 
   const lines = [
-    `📊 *R#${s.roundId} SNAPSHOT* (det 55)`,
+    `📊 *R#${s.roundId} SNAPSHOT* (det 52, ref R#${s.roundId - 1})`,
     `Players: *${s.totalPlayers}* | Board: *${s.totalBoardEth.toFixed(6)} ETH* ($${s.totalBoardUsd.toFixed(2)})`,
     ``,
     `*Distribusi Lawan:*`,
@@ -627,13 +627,14 @@ async function main() {
         }
       }
 
-      // ===== SNAPSHOT phase (detik ~55, tl = 5) =====
-      // tl 4-6 = 5 detik margin
-      if (!snapshotDone && tl >= 4 && tl <= 6 && rid === lastR) {
+      // ===== SNAPSHOT phase (detik ~52, tl = 7-9) =====
+      // Pakai data ronde N-1 (sudah settled) karena API tidak expose ronde aktif
+      if (!snapshotDone && tl >= 7 && tl <= 9 && rid === lastR) {
         snapshotDone = true;
-        console.log(`\n📸 SNAPSHOT R#${rid} (tl=${tl}s)`);
-        const snap = await takeSnapshot(rid);
+        console.log(`\n📸 SNAPSHOT R#${rid} (tl=${tl}s, ref R#${rid - 1})`);
+        const snap = await takeSnapshot(rid - 1);
         if (snap) {
+          snap.roundId = rid;
           lastSnapshot = snap;
           lastDecision = makeDecision(snap);
           // kirim laporan visualisasi

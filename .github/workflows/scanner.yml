@@ -53,7 +53,7 @@ jobs:
           FALLBACK_EXCHANGES: "kraken,mexc,bingx,bitget,coinbase"
           # Watchlist: BTC, ETH, BNB, SOL, PYTH (:USDT suffix auto-stripped on spot)
           WATCHLIST: "BTC/USDT:USDT,ETH/USDT:USDT,BNB/USDT:USDT,SOL/USDT:USDT,PYTH/USDT:USDT"
-          TIMEFRAMES: "30m,1h,4h"
+          TIMEFRAMES: "15m,30m,1h,4h"
           # ── Core indicator ──
           ATR_LENGTH: "10"
           ATR_MULT: "3.0"

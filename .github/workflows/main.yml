@@ -1,0 +1,9 @@
+python -c "
+from bot.tracker import Ledger
+ledger = Ledger('bot_ledger.json')
+stats = ledger.stats()
+print(f'Total sinyal: {stats.get(\"total\", 0)}')
+print(f'TP1+ hit: {stats.get(\"tp1_plus\", 0)} ({stats.get(\"tp1_winrate\", 0):.1f}%)')
+print(f'SL hit: {stats.get(\"sl\", 0)}')
+print(f'Masih open: {len(ledger.open_signals())}')
+"

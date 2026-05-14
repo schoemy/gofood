@@ -56,6 +56,11 @@ let MAX_LOSS_STREAK = 5;
 let lossStreak = 0;
 let stopped = false;
 
+// === AUTO SWAP CONFIG ===
+let AUTO_SWAP_THRESHOLD = ethers.parseEther('0.39'); // swap BEAN→ETH jika wallet BEAN >= 0.39
+let isSwapping = false;
+let pendingSwapAmount = 0n;
+
 // === STATE ===
 let lastR = 0;
 let snapshotDone = false;
@@ -84,6 +89,8 @@ const ABI = [
 ];
 const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) returns (bool)',
 ];
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
@@ -163,6 +170,64 @@ async function getAdaptiveFee({ boardEth = 0, gasLimit = 1000000n } = {}) {
 }
 
 
+
+// ==========================================================
+// AUTO SWAP — BEAN → ETH via KyberSwap Aggregator (Base)
+// ==========================================================
+async function swapBeanToEth(amount) {
+  try {
+    // 1. Get route dari KyberSwap
+    const r = await axios.get('https://aggregator-api.kyberswap.com/base/api/v1/routes', {
+      params: {
+        tokenIn: BEAN_TOKEN_ADDR,
+        tokenOut: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // native ETH
+        amountIn: amount.toString(),
+      },
+      timeout: 10000,
+    });
+    const routeSummary = r.data?.data?.routeSummary;
+    if (!routeSummary) throw new Error('No route found');
+
+    // 2. Build route
+    const br = await axios.post('https://aggregator-api.kyberswap.com/base/api/v1/route/build', {
+      routeSummary,
+      sender: wallet.address,
+      recipient: wallet.address,
+      slippageTolerance: 100, // 1%
+    }, { timeout: 10000 });
+    const txData = br.data?.data;
+    if (!txData) throw new Error('Build route failed');
+
+    // 3. Check & approve allowance
+    const currentAllowance = await beanToken.allowance(wallet.address, txData.routerAddress);
+    if (currentAllowance < amount) {
+      const approveTx = await beanToken.approve(txData.routerAddress, ethers.MaxUint256);
+      await approveTx.wait();
+      console.log('✅ Approved BEAN for KyberSwap router');
+    }
+
+    // 4. Execute swap dengan gas rendah (bukan last-second, bisa santai)
+    const sg = await getAdaptiveFee({ gasLimit: 900000n });
+    const tx = await wallet.sendTransaction({
+      to: txData.routerAddress,
+      data: txData.data,
+      value: txData.value || 0n,
+      gasLimit: 900000,
+      maxFeePerGas: sg.maxFeePerGas,
+      maxPriorityFeePerGas: sg.maxPriorityFeePerGas,
+    });
+    await tx.wait();
+
+    const swappedEth = ethers.formatEther(amount);
+    console.log(`🔄 SWAP done: ${swappedEth} BEAN → ETH`);
+    await tg(`🔄 *AUTO SWAP*\n${parseFloat(swappedEth).toFixed(4)} BEAN ➡️ ETH\n\`${tx.hash.slice(0, 20)}...\``);
+  } catch (e) {
+    // Simpan pending amount untuk retry nanti
+    pendingSwapAmount = amount;
+    console.error('Swap error:', e.message);
+    await tg(`❌ Swap error: ${e.message.slice(0, 80)}`);
+  }
+}
 
 // ==========================================================
 // SNAPSHOT — ambil data live di detik 55
@@ -439,6 +504,12 @@ async function checkReward(rId) {
     if (totalBeanNow >= AUTO_CLAIM_BEAN) {
       try { await (await grid.claimBEAN()).wait(); await tg(`🫘 Auto-claim BEAN: ${ethers.formatEther(totalBeanNow)}`); } catch (e) {}
     }
+
+    // Auto-swap: cek wallet BEAN balance setelah claim
+    const walletBean = await beanToken.balanceOf(wallet.address);
+    if (walletBean >= AUTO_SWAP_THRESHOLD && !isSwapping && pendingSwapAmount === 0n) {
+      pendingSwapAmount = walletBean;
+    }
   } catch (e) {
     console.error('Reward check err:', e.message);
   }
@@ -472,6 +543,7 @@ bot.onText(/\/status/, async (msg) => {
     `Skip whale  : ${SKIP_IF_WHALE ? 'YES' : 'NO'}`,
     `Skip if HIGH≥: ${SKIP_IF_HIGH_GTE}`,
     `Skip if board>: $${SKIP_IF_BOARD_USD}`,
+    `Auto-swap   : ${parseFloat(ethers.formatEther(AUTO_SWAP_THRESHOLD)) < 999999 ? ethers.formatEther(AUTO_SWAP_THRESHOLD) + ' BEAN' : 'OFF'}`,
     ``,
     `*Session:*`,
     `Deploys: ${sessionDeploys} | Wins: ${sessionWins}`,
@@ -525,6 +597,20 @@ bot.onText(/\/skipboard (.+)/, (msg, m) => {
   if (v > 0) { SKIP_IF_BOARD_USD = v; tg(`✅ Skip if board > $${v}`); }
 });
 
+bot.onText(/\/setswap (.+)/, (msg, m) => {
+  if (!isOwner(msg)) return;
+  try {
+    const val = m[1].trim().toLowerCase();
+    if (val === 'off' || val === '0') {
+      AUTO_SWAP_THRESHOLD = ethers.parseEther('999999'); // effectively disabled
+      tg(`✅ Auto-swap: *OFF*`);
+    } else {
+      AUTO_SWAP_THRESHOLD = ethers.parseEther(val);
+      tg(`✅ Auto-swap threshold: *${val} BEAN*`);
+    }
+  } catch (e) { tg(`❌ Format: /setswap 0.39 atau /setswap off`); }
+});
+
 bot.onText(/\/mode (.+)/, (msg, m) => {
   if (!isOwner(msg)) return;
   const v = m[1].trim().toLowerCase();
@@ -565,6 +651,7 @@ bot.onText(/\/help/, (msg) => {
     `/status - status & saldo`,
     `/setbudget [USD] - budget per ronde`,
     `/setminmodal [USD] - min modal stop-loss`,
+    `/setswap [BEAN] - threshold auto-swap (atau /setswap off)`,
     `/mode all - deploy 25 blok`,
     `/mode skip - skip prev winning block (24 blok)`,
     `/skipwhale on/off`,
@@ -625,6 +712,18 @@ async function main() {
         } finally {
           isProcessing = false;
         }
+      }
+
+      // ===== AUTO SWAP phase (saat idle, tl > 50) =====
+      if (pendingSwapAmount > 0n && !isSwapping && !isProcessing && !deploying && tl > 50 && tl < 59) {
+        isSwapping = true;
+        const swapAmt = pendingSwapAmount;
+        pendingSwapAmount = 0n;
+        setTimeout(async () => {
+          try { await swapBeanToEth(swapAmt); }
+          catch (e) { console.error('Swap exec err:', e.message); }
+          finally { isSwapping = false; }
+        }, 2000);
       }
 
       // ===== SNAPSHOT phase (detik ~52, tl = 7-9) =====

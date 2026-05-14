@@ -72,3 +72,11 @@ jobs:
           # Need enough history for EMA 200 + MACD warmup
           LOOKBACK: "500"
         run: python -m bot.scanner --once
+
+      - name: Upload ledger artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-ledger
+          path: bot_ledger.json
+          if-no-files-found: ignore

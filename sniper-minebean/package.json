@@ -1,0 +1,15 @@
+{
+  "name": "sniper-minebean",
+  "version": "2.0.0",
+  "description": "MineBean Auto-Strategy Sniper Bot (4 Strategies + Telegram)",
+  "main": "sniper.js",
+  "scripts": {
+    "start": "node sniper.js",
+    "demo": "node sniper.js --demo"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.0"
+  },
+  "author": "schoemy",
+  "license": "ISC"
+}

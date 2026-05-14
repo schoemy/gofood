@@ -38,7 +38,7 @@ class Settings:
         ).split(",") if s.strip()
     ])
     timeframes: List[str] = field(default_factory=lambda: [
-        s.strip() for s in os.getenv("TIMEFRAMES", "30m,1h,4h").split(",") if s.strip()
+        s.strip() for s in os.getenv("TIMEFRAMES", "15m,30m,1h,4h").split(",") if s.strip()
     ])
     lookback: int = int(os.getenv("LOOKBACK", "300"))
     poll_interval: int = int(os.getenv("POLL_INTERVAL", "60"))

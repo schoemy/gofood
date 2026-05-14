@@ -61,6 +61,9 @@ let AUTO_SWAP_THRESHOLD = ethers.parseEther('0.39'); // swap BEAN→ETH jika wal
 let isSwapping = false;
 let pendingSwapAmount = 0n;
 
+// === BEANPOT THRESHOLD ===
+let MIN_BEANPOT_THRESHOLD = 0; // skip deploy jika beanpot < ini (0 = disabled)
+
 // === STATE ===
 let lastR = 0;
 let snapshotDone = false;
@@ -303,6 +306,9 @@ function makeDecision(snapshot) {
   const { totalPlayers, totalBoardEth, totalBoardUsd, stats } = snapshot;
 
   // === SKIP CONDITIONS ===
+  if (MIN_BEANPOT_THRESHOLD > 0 && currentBeanpotBean < MIN_BEANPOT_THRESHOLD) {
+    return { skip: true, reason: `Beanpot ${currentBeanpotBean.toFixed(2)} < ${MIN_BEANPOT_THRESHOLD}`, snapshot };
+  }
   if (SKIP_IF_WHALE && stats.WHALE.count > 0) {
     return { skip: true, reason: `${stats.WHALE.count} whale terdeteksi (max ${stats.WHALE.max.toFixed(6)})`, snapshot };
   }
@@ -544,6 +550,7 @@ bot.onText(/\/status/, async (msg) => {
     `Skip if HIGH≥: ${SKIP_IF_HIGH_GTE}`,
     `Skip if board>: $${SKIP_IF_BOARD_USD}`,
     `Auto-swap   : ${parseFloat(ethers.formatEther(AUTO_SWAP_THRESHOLD)) < 999999 ? ethers.formatEther(AUTO_SWAP_THRESHOLD) + ' BEAN' : 'OFF'}`,
+    `Min beanpot : ${MIN_BEANPOT_THRESHOLD > 0 ? MIN_BEANPOT_THRESHOLD + ' BEAN' : 'OFF'}`,
     ``,
     `*Session:*`,
     `Deploys: ${sessionDeploys} | Wins: ${sessionWins}`,
@@ -611,6 +618,15 @@ bot.onText(/\/setswap (.+)/, (msg, m) => {
   } catch (e) { tg(`❌ Format: /setswap 0.39 atau /setswap off`); }
 });
 
+bot.onText(/\/setpot (.+)/, (msg, m) => {
+  if (!isOwner(msg)) return;
+  const v = parseFloat(m[1]);
+  if (!isNaN(v) && v >= 0) {
+    MIN_BEANPOT_THRESHOLD = v;
+    tg(`✅ Min beanpot threshold: *${v} BEAN*${v === 0 ? ' (disabled)' : ''}`);
+  } else { tg(`❌ Format: /setpot 50 atau /setpot 0 (disable)`); }
+});
+
 bot.onText(/\/mode (.+)/, (msg, m) => {
   if (!isOwner(msg)) return;
   const v = m[1].trim().toLowerCase();
@@ -652,6 +668,7 @@ bot.onText(/\/help/, (msg) => {
     `/setbudget [USD] - budget per ronde`,
     `/setminmodal [USD] - min modal stop-loss`,
     `/setswap [BEAN] - threshold auto-swap (atau /setswap off)`,
+    `/setpot [BEAN] - min beanpot utk deploy (0 = off)`,
     `/mode all - deploy 25 blok`,
     `/mode skip - skip prev winning block (24 blok)`,
     `/skipwhale on/off`,

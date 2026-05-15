@@ -136,29 +136,26 @@ def resolve_signal(ts: TrackedSignal, df: pd.DataFrame) -> bool:
     if df is None or len(df) == 0:
         return False
 
-    # Only bars strictly after the signal candle
-    # Use >= to include the signal candle itself (entry might be mid-candle)
+    # All bars strictly AFTER the signal candle timestamp
     df_ts_seconds = df.index.astype("int64") // 10**9
-    post = df[df_ts_seconds >= ts.created_ts]
-    # Skip the first candle (the entry candle itself) — resolve from next bar
-    if len(post) > 1:
-        post = post.iloc[1:]
-    else:
-        post = post.iloc[0:0]  # empty
+    post = df[df_ts_seconds > ts.created_ts]
 
     if post.empty:
-        log.debug("resolve %s: no bars after signal ts=%d (df range: %s to %s)",
-                  ts.key, ts.created_ts,
-                  df.index[0] if len(df) > 0 else "?",
-                  df.index[-1] if len(df) > 0 else "?")
+        # Log details so we can diagnose why no bars found
+        first_ts = int(df_ts_seconds.iloc[0]) if len(df) > 0 else 0
+        last_ts = int(df_ts_seconds.iloc[-1]) if len(df) > 0 else 0
+        log.info("resolve %s: NO bars after signal_ts=%d (df range: %d..%d, %d bars total)",
+                 ts.key, ts.created_ts, first_ts, last_ts, len(df))
         return False
 
-    log.debug("resolve %s: checking %d bars (signal_ts=%d, first_bar=%s, last_bar=%s, "
-              "TP1=%.5f, SL=%.5f, direction=%s)",
-              ts.key, len(post), ts.created_ts,
-              post.index[0], post.index[-1],
-              ts.take_profits[0] if ts.take_profits else 0,
-              ts.stop_loss, ts.direction)
+    log.info("resolve %s: found %d bars after signal (signal_ts=%d, dir=%s, "
+             "entry=%.5f, TP1=%.5f, SL=%.5f, post_high_max=%.5f, post_low_min=%.5f)",
+             ts.key, len(post), ts.created_ts, ts.direction,
+             ts.entry,
+             ts.take_profits[0] if ts.take_profits else 0,
+             ts.stop_loss,
+             float(post["high"].max()),
+             float(post["low"].min()))
 
     is_long = ts.direction == "LONG"
     sl = ts.stop_loss

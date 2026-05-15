@@ -58,9 +58,9 @@ jobs:
           # ── Core indicator ──
           ATR_LENGTH: "10"
           ATR_MULT: "3.0"
-          # ── Filters OFF for testing ──
-          USE_RSI_FILTER: "false"
-          USE_MACD_FILTER: "false"
+          # ── Confluence filters ──
+          USE_RSI_FILTER: "true"
+          USE_MACD_FILTER: "true"
           MACD_FAST: "12"
           MACD_SLOW: "26"
           MACD_SIGNAL: "9"

@@ -618,6 +618,15 @@ bot.onText(/\/setswap (.+)/, (msg, m) => {
   } catch (e) { tg(`❌ Format: /setswap 0.39 atau /setswap off`); }
 });
 
+bot.onText(/\/setloss (.+)/, (msg, m) => {
+  if (!isOwner(msg)) return;
+  const v = parseInt(m[1]);
+  if (!isNaN(v) && v >= 1) {
+    MAX_LOSS_STREAK = v;
+    tg(`✅ Max loss streak: *${v}*`);
+  } else { tg(`❌ Format: /setloss 5`); }
+});
+
 bot.onText(/\/setpot (.+)/, (msg, m) => {
   if (!isOwner(msg)) return;
   const v = parseFloat(m[1]);
@@ -669,6 +678,7 @@ bot.onText(/\/help/, (msg) => {
     `/setminmodal [USD] - min modal stop-loss`,
     `/setswap [BEAN] - threshold auto-swap (atau /setswap off)`,
     `/setpot [BEAN] - min beanpot utk deploy (0 = off)`,
+    `/setloss [N] - max loss streak sebelum pause`,
     `/mode all - deploy 25 blok`,
     `/mode skip - skip prev winning block (24 blok)`,
     `/skipwhale on/off`,

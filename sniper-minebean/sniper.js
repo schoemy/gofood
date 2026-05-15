@@ -64,6 +64,9 @@ let pendingSwapAmount = 0n;
 // === BEANPOT THRESHOLD ===
 let MIN_BEANPOT_THRESHOLD = 0; // skip deploy jika beanpot < ini (0 = disabled)
 
+// === MANUAL BET MODE ===
+let MANUAL_BET = null; // null = auto (adaptive), set value = fixed bet per block
+
 // === STATE ===
 let lastR = 0;
 let snapshotDone = false;
@@ -323,16 +326,17 @@ function makeDecision(snapshot) {
   }
 
   // === BET CALCULATION ===
-  // Target: dominasi MICRO + top SEMUT
-  // Hitung bet optimal:
-  // - Kalau ada SEMUT, overtake top SEMUT × 1.15
-  // - Kalau cuma MICRO, ambil top MICRO × 1.5
-  // - Capped MIN/MAX
+  // Jika MANUAL_BET aktif, pakai fixed bet
+  // Jika auto: dominasi MICRO + top SEMUT
 
   let optimalBetEth = 0;
   let strategy = '';
 
-  if (stats.SEMUT.count > 0) {
+  if (MANUAL_BET !== null) {
+    // Manual mode — fixed bet per block
+    optimalBetEth = parseFloat(ethers.formatEther(MANUAL_BET));
+    strategy = `MANUAL (${optimalBetEth.toFixed(6)} ETH/blok)`;
+  } else if (stats.SEMUT.count > 0) {
     // ada SEMUT, overtake top SEMUT
     optimalBetEth = stats.SEMUT.max * 1.15;
     strategy = `Overtake SEMUT leader (${stats.SEMUT.max.toFixed(6)}) +15%`;
@@ -345,12 +349,14 @@ function makeDecision(snapshot) {
     strategy = 'Default (no opponent)';
   }
 
-  // Apply MIN/MAX cap
+  // Apply MIN/MAX cap (hanya untuk auto mode)
   const minEth = parseFloat(ethers.formatEther(MIN_BET_PER_BLOCK));
   const maxEth = parseFloat(ethers.formatEther(MAX_BET_PER_BLOCK));
   let capped = false;
-  if (optimalBetEth > maxEth) { optimalBetEth = maxEth; capped = true; }
-  if (optimalBetEth < minEth) { optimalBetEth = minEth; }
+  if (MANUAL_BET === null) {
+    if (optimalBetEth > maxEth) { optimalBetEth = maxEth; capped = true; }
+    if (optimalBetEth < minEth) { optimalBetEth = minEth; }
+  }
 
   const betWei = ethers.parseEther(optimalBetEth.toFixed(9));
   const totalEth = optimalBetEth * 25;
@@ -551,6 +557,7 @@ bot.onText(/\/status/, async (msg) => {
     `Skip if board>: $${SKIP_IF_BOARD_USD}`,
     `Auto-swap   : ${parseFloat(ethers.formatEther(AUTO_SWAP_THRESHOLD)) < 999999 ? ethers.formatEther(AUTO_SWAP_THRESHOLD) + ' BEAN' : 'OFF'}`,
     `Min beanpot : ${MIN_BEANPOT_THRESHOLD > 0 ? MIN_BEANPOT_THRESHOLD + ' BEAN' : 'OFF'}`,
+    `Bet mode    : ${MANUAL_BET !== null ? 'MANUAL ' + ethers.formatEther(MANUAL_BET) + ' ETH/blok' : 'AUTO'}`,
     ``,
     `*Session:*`,
     `Deploys: ${sessionDeploys} | Wins: ${sessionWins}`,
@@ -627,6 +634,21 @@ bot.onText(/\/setloss (.+)/, (msg, m) => {
   } else { tg(`❌ Format: /setloss 5`); }
 });
 
+bot.onText(/\/setbet (.+)/, (msg, m) => {
+  if (!isOwner(msg)) return;
+  const val = m[1].trim().toLowerCase();
+  if (val === 'auto' || val === 'off') {
+    MANUAL_BET = null;
+    tg(`✅ Bet mode: *AUTO* (adaptive berdasarkan lawan)`);
+  } else {
+    try {
+      const parsed = ethers.parseEther(val);
+      MANUAL_BET = parsed;
+      tg(`✅ Bet mode: *MANUAL*\nFixed: *${val} ETH/blok* (${(parseFloat(val) * 25).toFixed(6)} ETH total/ronde)`);
+    } catch (e) { tg(`❌ Format: /setbet 0.00004 atau /setbet auto`); }
+  }
+});
+
 bot.onText(/\/setpot (.+)/, (msg, m) => {
   if (!isOwner(msg)) return;
   const v = parseFloat(m[1]);
@@ -675,6 +697,7 @@ bot.onText(/\/help/, (msg) => {
     `📋 *COMMANDS v16.0*`,
     `/status - status & saldo`,
     `/setbudget [USD] - budget per ronde`,
+    `/setbet [ETH] - fixed bet per blok (atau /setbet auto)`,
     `/setminmodal [USD] - min modal stop-loss`,
     `/setswap [BEAN] - threshold auto-swap (atau /setswap off)`,
     `/setpot [BEAN] - min beanpot utk deploy (0 = off)`,

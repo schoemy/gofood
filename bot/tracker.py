@@ -142,8 +142,8 @@ def resolve_signal(ts: TrackedSignal, df: pd.DataFrame) -> bool:
 
     if post.empty:
         # Log details so we can diagnose why no bars found
-        first_ts = int(df_ts_seconds.iloc[0]) if len(df) > 0 else 0
-        last_ts = int(df_ts_seconds.iloc[-1]) if len(df) > 0 else 0
+        first_ts = int(df_ts_seconds[0]) if len(df) > 0 else 0
+        last_ts = int(df_ts_seconds[-1]) if len(df) > 0 else 0
         log.info("resolve %s: NO bars after signal_ts=%d (df range: %d..%d, %d bars total)",
                  ts.key, ts.created_ts, first_ts, last_ts, len(df))
         return False

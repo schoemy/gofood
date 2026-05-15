@@ -137,9 +137,28 @@ def resolve_signal(ts: TrackedSignal, df: pd.DataFrame) -> bool:
         return False
 
     # Only bars strictly after the signal candle
-    post = df[df.index.astype("int64") // 10**9 > ts.created_ts]
+    # Use >= to include the signal candle itself (entry might be mid-candle)
+    df_ts_seconds = df.index.astype("int64") // 10**9
+    post = df[df_ts_seconds >= ts.created_ts]
+    # Skip the first candle (the entry candle itself) — resolve from next bar
+    if len(post) > 1:
+        post = post.iloc[1:]
+    else:
+        post = post.iloc[0:0]  # empty
+
     if post.empty:
+        log.debug("resolve %s: no bars after signal ts=%d (df range: %s to %s)",
+                  ts.key, ts.created_ts,
+                  df.index[0] if len(df) > 0 else "?",
+                  df.index[-1] if len(df) > 0 else "?")
         return False
+
+    log.debug("resolve %s: checking %d bars (signal_ts=%d, first_bar=%s, last_bar=%s, "
+              "TP1=%.5f, SL=%.5f, direction=%s)",
+              ts.key, len(post), ts.created_ts,
+              post.index[0], post.index[-1],
+              ts.take_profits[0] if ts.take_profits else 0,
+              ts.stop_loss, ts.direction)
 
     is_long = ts.direction == "LONG"
     sl = ts.stop_loss

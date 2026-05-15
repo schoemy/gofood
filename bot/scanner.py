@@ -26,13 +26,16 @@ from typing import Iterable, Optional, Set, Tuple
 import ccxt
 import pandas as pd
 
+import os
+
 from bot import telegram
 from bot.config import settings
 from bot.indicators import Signal, analyze
 from bot.tracker import Ledger, format_resolution, format_stats, resolve_signal
 
+log_level = logging.DEBUG if os.getenv("DEBUG", "").lower() in ("1", "true") else logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s  %(levelname)-7s  %(name)s: %(message)s",
 )
 log = logging.getLogger("scanner")
@@ -192,6 +195,14 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger") -> 
                 ts_base = ts.symbol.split(":")[0]
                 if ts_base != base_symbol or ts.timeframe != tf:
                     continue
+                log.info("Attempting resolve: %s (entry=%.5f, TP1=%.5f, SL=%.5f, dir=%s, "
+                         "signal_ts=%d, df_last=%s, high=%.5f, low=%.5f)",
+                         ts.key, ts.entry,
+                         ts.take_profits[0] if ts.take_profits else 0,
+                         ts.stop_loss, ts.direction, ts.created_ts,
+                         df.index[-1] if len(df) > 0 else "?",
+                         float(df["high"].iloc[-1]) if len(df) > 0 else 0,
+                         float(df["low"].iloc[-1]) if len(df) > 0 else 0)
                 if resolve_signal(ts, df):
                     resolutions += 1
                     log.info("RESOLVED %s -> %s", ts.key, ts.status)

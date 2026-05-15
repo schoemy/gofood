@@ -186,8 +186,11 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger") -> 
                 continue
 
             # ── Resolve any previously-open signals for this symbol/tf ──
+            # Compare base symbol (strip :USDT suffix) to handle exchange switches
+            base_symbol = symbol.split(":")[0]
             for ts in ledger.open_signals():
-                if ts.symbol != symbol or ts.timeframe != tf:
+                ts_base = ts.symbol.split(":")[0]
+                if ts_base != base_symbol or ts.timeframe != tf:
                     continue
                 if resolve_signal(ts, df):
                     resolutions += 1

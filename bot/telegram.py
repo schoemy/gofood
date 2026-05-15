@@ -73,25 +73,38 @@ def format_signal(sig: Signal) -> str:
 
 
 def send_message(token: str, chat_id: str, text: str) -> bool:
+    """
+    Send a message to one or multiple Telegram chat IDs.
+    chat_id can be a single ID or comma-separated list:
+        "123456789"
+        "123456789,-1001234567890,@ggshot_signals"
+    """
     if not token or not chat_id:
         log.warning("Telegram credentials missing; printing message instead:\n%s", text)
         return False
-    try:
-        resp = requests.post(
-            TELEGRAM_API.format(token=token),
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        log.error("Telegram send failed: %s", e)
-        return False
+
+    # Support multiple chat IDs separated by comma
+    chat_ids = [cid.strip() for cid in chat_id.split(",") if cid.strip()]
+    success = False
+
+    for cid in chat_ids:
+        try:
+            resp = requests.post(
+                TELEGRAM_API.format(token=token),
+                json={
+                    "chat_id": cid,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            success = True
+        except requests.RequestException as e:
+            log.error("Telegram send to %s failed: %s", cid, e)
+
+    return success
 
 
 def send_signal(token: str, chat_id: str, sig: Signal) -> bool:

@@ -291,6 +291,17 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger",
                 settings.telegram_chat_id,
                 stats_msg,
             )
+    elif signals == 0 and open_count == 0:
+        # Heartbeat: let user know bot ran but found nothing
+        telegram.send_message(
+            settings.telegram_bot_token,
+            settings.telegram_chat_id,
+            f"🤖 <b>Scan complete</b>\n"
+            f"Exchange: {handle.id}\n"
+            f"Pairs scanned: {scanned}\n"
+            f"No new signals or open positions.\n"
+            f"(Waiting for Supertrend flip...)",
+        )
 
     # Report live trade PnL from Bybit if executor is active
     if executor and executor.config.enabled:

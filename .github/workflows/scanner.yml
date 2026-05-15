@@ -58,7 +58,7 @@ jobs:
           # ── Core indicator ──
           ATR_LENGTH: "10"
           ATR_MULT: "3.0"
-          # ── Confluence filters (biar hanya ambil sinyal trend-aligned) ──
+          # ── Filters OFF for testing ──
           USE_RSI_FILTER: "false"
           USE_MACD_FILTER: "false"
           MACD_FAST: "12"
@@ -66,10 +66,12 @@ jobs:
           MACD_SIGNAL: "9"
           USE_EMA_FILTER: "false"
           EMA_LENGTH: "200"
-          # ── Stop-loss: trend-line based (exit only when Supertrend flips) ──
-          # Mode lain: "atr" (SL ketat ± sl_multiplier×ATR) | "max" (aman, mana yang lebih jauh)
+          # ── Stop-loss ──
           SL_MODE: "trendline"
           SL_BUFFER_ATR: "0.3"
+          # ── Pre-signal (wider threshold for more triggers) ──
+          ENABLE_PRE_SIGNAL: "true"
+          PRE_SIGNAL_THRESHOLD: "0.5"
           # Need enough history for EMA 200 + MACD warmup
           LOOKBACK: "500"
           # ── Bybit Auto-Trade (Testnet) ──

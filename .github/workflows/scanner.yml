@@ -38,8 +38,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: bot_ledger.json
-          key: ggshot-ledger-${{ github.run_id }}
-          restore-keys: ggshot-ledger-
+          key: ggshot-ledger-v2-${{ github.run_id }}
+          restore-keys: ggshot-ledger-v2-
 
       - name: Run scanner once
         env:

@@ -27,6 +27,8 @@ class Signal:
     timestamp: pd.Timestamp
     # Confluence context (for Telegram message + debugging)
     confluence: dict = field(default_factory=dict)
+    # Confidence score 0-100 (higher = stronger signal)
+    confidence: int = 0
     key: str = ""
 
     def __post_init__(self):
@@ -264,6 +266,52 @@ def analyze(
 
         label = direction if not is_pre else f"PRE_{direction}"
         ts = last.name if isinstance(last.name, pd.Timestamp) else pd.Timestamp(last.name)
+
+        # ── Confidence score (0-100) ──
+        # Base: 40 for flip, 20 for pre-signal
+        score = 40 if not is_pre else 20
+
+        # +15 RSI confluence (strong momentum)
+        if direction.endswith("LONG") and rsi > 55:
+            score += 15
+        elif direction.endswith("SHORT") and rsi < 45:
+            score += 15
+        elif direction.endswith("LONG") and rsi > 50:
+            score += 8
+        elif direction.endswith("SHORT") and rsi < 50:
+            score += 8
+
+        # +15 MACD confluence (histogram confirms direction)
+        if "macd_hist" in confluence:
+            mh = confluence["macd_hist"]
+            if direction.endswith("LONG") and mh > 0:
+                score += 15
+            elif direction.endswith("SHORT") and mh < 0:
+                score += 15
+
+        # +15 EMA confluence (price on right side of trend)
+        for k, v in confluence.items():
+            if k.startswith("ema_"):
+                if direction.endswith("LONG") and close > float(v):
+                    score += 15
+                elif direction.endswith("SHORT") and close < float(v):
+                    score += 15
+                break
+
+        # +10 Strong RSI (very bullish/bearish momentum)
+        if direction.endswith("LONG") and rsi > 65:
+            score += 10
+        elif direction.endswith("SHORT") and rsi < 35:
+            score += 10
+
+        # +5 Risk/Reward ratio > 2:1
+        rr = abs(tps[0] - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
+        if rr >= 2.0:
+            score += 5
+
+        confidence = min(score, 100)
+        confluence["confidence"] = confidence
+
         return Signal(
             symbol=symbol,
             timeframe=timeframe,
@@ -276,6 +324,7 @@ def analyze(
             rsi=rsi,
             timestamp=ts,
             confluence=confluence,
+            confidence=confidence,
         )
 
     # Hard flip beats pre-signal

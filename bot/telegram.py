@@ -24,6 +24,26 @@ def _fmt_price(p: float) -> str:
     return f"{p:.5f}"
 
 
+def _confidence_bar(score: int) -> str:
+    """Visual confidence bar + label. Score 0-100."""
+    filled = score // 10
+    empty = 10 - filled
+    bar = "🟩" * filled + "⬜" * empty
+
+    if score >= 80:
+        label = "VERY STRONG"
+    elif score >= 60:
+        label = "STRONG"
+    elif score >= 40:
+        label = "MODERATE"
+    elif score >= 25:
+        label = "WEAK"
+    else:
+        label = "VERY WEAK"
+
+    return f"{bar} {score}% ({label})"
+
+
 def format_signal(sig: Signal) -> str:
     is_pre = sig.direction.startswith("PRE_")
     side = "LONG" if sig.direction.endswith("LONG") else "SHORT"
@@ -67,6 +87,7 @@ def format_signal(sig: Signal) -> str:
         f"🧲 Trend-Line: <code>{_fmt_price(sig.trend_line)}</code>\n"
         f"❌ Stop-Loss: <code>{_fmt_price(sig.stop_loss)}</code>\n"
         f"📊 ATR: <code>{_fmt_price(sig.atr)}</code>  |  {'  |  '.join(conf_parts)}\n"
+        f"🎯 Confidence: <b>{_confidence_bar(sig.confidence)}</b>\n"
         f"💡 After TP1, move the rest of the position to breakeven."
     )
     return msg

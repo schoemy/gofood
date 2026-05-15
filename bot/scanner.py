@@ -30,6 +30,7 @@ import os
 
 from bot import telegram
 from bot.config import settings
+from bot.executor import BybitExecutor, ExecutorConfig, format_execution_msg
 from bot.indicators import Signal, analyze
 from bot.tracker import Ledger, format_resolution, format_stats, resolve_signal
 
@@ -167,7 +168,8 @@ def fetch_ohlcv(exchange: "ccxt.Exchange", symbol: str, timeframe: str, limit: i
 
 # ─────────────────────────── Scan loop ────────────────────────────────
 
-def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger") -> None:
+def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger",
+              executor: Optional["BybitExecutor"] = None) -> None:
     scanned = 0
     errors = 0
     signals = 0
@@ -256,6 +258,16 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger") -> 
                 ledger.add(sig)
                 ledger.save()
 
+                # Auto-execute trade on Bybit if executor is enabled
+                if executor and executor.config.enabled:
+                    trade_ok = executor.execute_signal(sig)
+                    exec_msg = format_execution_msg(sig, trade_ok, executor.config.testnet)
+                    telegram.send_message(
+                        settings.telegram_bot_token,
+                        settings.telegram_chat_id,
+                        exec_msg,
+                    )
+
     # Persist ledger after resolutions
     if resolutions > 0:
         ledger.save()
@@ -275,6 +287,16 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger") -> 
                 settings.telegram_bot_token,
                 settings.telegram_chat_id,
                 stats_msg,
+            )
+
+    # Report live trade PnL from Bybit if executor is active
+    if executor and executor.config.enabled:
+        pnl_msg = executor.get_pnl_summary()
+        if pnl_msg:
+            telegram.send_message(
+                settings.telegram_bot_token,
+                settings.telegram_chat_id,
+                pnl_msg,
             )
 
 
@@ -303,13 +325,36 @@ def main():
     log.info("Loaded ledger: %d total signals, %d still open",
              len(ledger.signals), len(ledger.open_signals()))
 
+    # Initialize Bybit executor (auto-trade)
+    executor = None
+    if settings.executor_enabled:
+        exec_config = ExecutorConfig(
+            enabled=settings.executor_enabled,
+            api_key=settings.bybit_api_key,
+            api_secret=settings.bybit_api_secret,
+            order_size_usdt=settings.order_size_usdt,
+            use_percent_balance=settings.use_percent_balance,
+            percent_balance=settings.percent_balance,
+            leverage=settings.leverage,
+            max_position_usdt=settings.max_position_usdt,
+            max_concurrent_positions=settings.max_concurrent_positions,
+            use_tp1_only=settings.use_tp1_only,
+            set_sl=settings.executor_set_sl,
+            testnet=settings.bybit_testnet,
+        )
+        executor = BybitExecutor(exec_config)
+        if executor.config.enabled:
+            log.info("Executor ACTIVE: %s, size=%.1f USDT, leverage=%dx",
+                     "TESTNET" if exec_config.testnet else "LIVE",
+                     exec_config.order_size_usdt, exec_config.leverage)
+
     if args.once:
-        scan_once(handle, sent_keys, ledger)
+        scan_once(handle, sent_keys, ledger, executor)
         return
 
     while True:
         try:
-            scan_once(handle, sent_keys, ledger)
+            scan_once(handle, sent_keys, ledger, executor)
         except KeyboardInterrupt:
             log.info("Interrupted, exiting.")
             sys.exit(0)

@@ -82,5 +82,23 @@ class Settings:
     state_file: str = os.getenv("STATE_FILE", "bot_state.json")
     ledger_file: str = os.getenv("LEDGER_FILE", "bot_ledger.json")
 
+    # ───── Bybit Executor (auto-trade) ─────
+    executor_enabled: bool = os.getenv("EXECUTOR_ENABLED", "false").lower() == "true"
+    bybit_api_key: str = os.getenv("BYBIT_API_KEY", "")
+    bybit_api_secret: str = os.getenv("BYBIT_API_SECRET", "")
+    bybit_testnet: bool = os.getenv("BYBIT_TESTNET", "true").lower() == "true"
+
+    # Position sizing
+    order_size_usdt: float = float(os.getenv("ORDER_SIZE_USDT", "10"))
+    use_percent_balance: bool = os.getenv("USE_PERCENT_BALANCE", "false").lower() == "true"
+    percent_balance: float = float(os.getenv("PERCENT_BALANCE", "5"))
+    leverage: int = int(os.getenv("LEVERAGE", "10"))
+    max_position_usdt: float = float(os.getenv("MAX_POSITION_USDT", "100"))
+    max_concurrent_positions: int = int(os.getenv("MAX_CONCURRENT_POSITIONS", "5"))
+
+    # TP/SL on exchange
+    use_tp1_only: bool = os.getenv("USE_TP1_ONLY", "true").lower() == "true"
+    executor_set_sl: bool = os.getenv("EXECUTOR_SET_SL", "true").lower() == "true"
+
 
 settings = Settings()

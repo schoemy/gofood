@@ -197,16 +197,24 @@ def format_resolution(ts: TrackedSignal) -> str:
     return "\n".join(lines)
 
 
-def format_stats(stats: dict) -> str:
-    if stats.get("total", 0) == 0:
+def format_stats(stats: dict, open_count: int = 0) -> str:
+    if stats.get("total", 0) == 0 and open_count == 0:
         return ""
-    return (
-        f"📈 <b>Bot stats</b>\n"
-        f"Total resolved: <code>{stats['total']}</code>\n"
-        f"TP1+: <code>{stats['tp1_plus']}</code> "
-        f"({stats['tp1_winrate']}%)\n"
-        f"TP2+: <code>{stats['tp2_plus']}</code>  "
-        f"TP3+: <code>{stats['tp3_plus']}</code>  "
-        f"TP4: <code>{stats['tp4']}</code>\n"
-        f"SL: <code>{stats['sl']}</code>"
-    )
+    lines = ["📈 <b>Bot Stats</b>"]
+    if open_count > 0:
+        lines.append(f"🔄 Open signals: <code>{open_count}</code>")
+    if stats.get("total", 0) > 0:
+        lines.append(f"✅ Resolved: <code>{stats['total']}</code>")
+        lines.append(
+            f"TP1+: <code>{stats['tp1_plus']}</code> "
+            f"({stats['tp1_winrate']}%)"
+        )
+        lines.append(
+            f"TP2+: <code>{stats['tp2_plus']}</code>  "
+            f"TP3+: <code>{stats['tp3_plus']}</code>  "
+            f"TP4: <code>{stats['tp4']}</code>"
+        )
+        lines.append(f"SL: <code>{stats['sl']}</code>")
+    else:
+        lines.append("⏳ Belum ada sinyal yang resolved (kena TP/SL)")
+    return "\n".join(lines)

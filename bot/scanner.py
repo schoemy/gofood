@@ -247,13 +247,15 @@ def scan_once(handle: ExchangeHandle, sent_keys: Set[str], ledger: "Ledger") -> 
         ledger.save()
 
     stats = ledger.stats()
+    open_count = len(ledger.open_signals())
     log.info("Scan complete on %s: %d pairs scanned, %d signals, %d resolved, %d errors",
              handle.id, scanned, signals, resolutions, errors)
     if stats.get("total", 0) > 0:
         log.info("Ledger stats: total=%d  TP1+=%d (%.1f%%)  SL=%d",
                  stats["total"], stats["tp1_plus"], stats["tp1_winrate"], stats["sl"])
-        # Auto-report win rate to Telegram after each scan
-        stats_msg = format_stats(stats)
+    # Always report stats to Telegram (including open signal count)
+    if stats.get("total", 0) > 0 or open_count > 0:
+        stats_msg = format_stats(stats, open_count)
         if stats_msg:
             telegram.send_message(
                 settings.telegram_bot_token,

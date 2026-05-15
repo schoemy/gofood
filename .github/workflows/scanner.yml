@@ -59,8 +59,8 @@ jobs:
           ATR_LENGTH: "10"
           ATR_MULT: "3.0"
           # ── Confluence filters (biar hanya ambil sinyal trend-aligned) ──
-          USE_RSI_FILTER: "true"
-          USE_MACD_FILTER: "true"
+          USE_RSI_FILTER: "false"
+          USE_MACD_FILTER: "false"
           MACD_FAST: "12"
           MACD_SLOW: "26"
           MACD_SIGNAL: "9"

@@ -72,6 +72,15 @@ jobs:
           SL_BUFFER_ATR: "0.3"
           # Need enough history for EMA 200 + MACD warmup
           LOOKBACK: "500"
+          # ── Bybit Auto-Trade (Testnet) ──
+          EXECUTOR_ENABLED: ${{ secrets.EXECUTOR_ENABLED }}
+          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
+          BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
+          BYBIT_TESTNET: "true"
+          ORDER_SIZE_USDT: "10"
+          LEVERAGE: "10"
+          MAX_POSITION_USDT: "100"
+          MAX_CONCURRENT_POSITIONS: "5"
         run: python -m bot.scanner --once
 
       - name: Upload ledger artifact

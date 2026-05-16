@@ -238,70 +238,43 @@ async function swapBeanToEth(amount) {
 }
 
 // ==========================================================
-// SNAPSHOT — COMBINE: on-chain getRoundDeployed + API per-wallet
-// 1. Contract → confirm board size (totalBoard, perBlock)
-// 2. API → breakdown per wallet untuk classify kelas
+// SNAPSHOT — ambil data dari ronde sebelumnya (N-1, settled)
+// Pakai /api/round/{id}/miners untuk breakdown per wallet
 // ==========================================================
 async function takeSnapshot(roundId) {
   try {
-    // === STEP 1: On-chain data (pasti akurat) ===
-    const deployed = await grid.getRoundDeployed(roundId);
-    let totalBoardEth = 0;
-    let maxBlockEth = 0;
-    const blockData = [];
+    const res = await axios.get(`${MINEBEAN_API}/api/round/${roundId}/miners`, { timeout: 4000 });
 
-    for (let i = 0; i < 25; i++) {
-      const ethVal = parseFloat(ethers.formatEther(deployed[i]));
-      blockData.push(ethVal);
-      totalBoardEth += ethVal;
-      if (ethVal > maxBlockEth) maxBlockEth = ethVal;
+    // Track winning block dari ronde sebelumnya (kalau API kasih)
+    if (res.data?.winningBlock != null) {
+      const wb = Number(res.data.winningBlock);
+      if (wb >= 0 && wb <= 24) prevWinningBlock = wb;
     }
 
-    const perBlock = totalBoardEth / 25; // avg ETH per blok (asumsi semua deploy 25 blok)
+    let miners = res.data?.miners || res.data?.data?.miners || res.data?.data || res.data;
+    if (!Array.isArray(miners) && miners && typeof miners === 'object') miners = Object.values(miners);
+    if (!Array.isArray(miners)) miners = [];
 
-    // === STEP 2: API per-wallet breakdown (best effort) ===
     const classes = { MICRO: [], SEMUT: [], MID: [], HIGH: [], WHALE: [] };
-    let totalPlayers = 0;
+    let totalBoardEth = 0;
     let myBetEth = 0;
-    let apiSuccess = false;
+    let totalPlayers = 0;
 
-    try {
-      const res = await axios.get(`${MINEBEAN_API}/api/round/current`, { timeout: 3000 });
-      let miners = res.data?.miners || res.data?.data?.miners || res.data?.data || res.data;
-      if (!Array.isArray(miners) && miners && typeof miners === 'object') miners = Object.values(miners);
-      if (Array.isArray(miners) && miners.length > 0) {
-        apiSuccess = true;
-        for (const m of miners) {
-          let raw = m.address || m.walletAddress || m.deployer || m.user || m.miner || m.wallet || m.account;
-          if (typeof raw === 'object' && raw !== null) raw = raw.address || raw.wallet || raw.id;
-          const addr = String(raw || '?').toLowerCase();
-          const dw = parseDeployWei(m.deployedFormatted ?? m.deployed ?? 0);
-          const dEth = parseFloat(ethers.formatEther(dw));
-          if (dEth <= 0) continue;
-          totalPlayers++;
-          if (addr === MY_ADDRESS) { myBetEth += dEth; continue; }
-          const cls = classifyBet(dEth);
-          classes[cls].push({ addr, bet: dEth });
-        }
-      }
-    } catch (e) {
-      // API gagal, fallback ke estimasi dari on-chain
+    for (const m of miners) {
+      let raw = m.address || m.walletAddress || m.deployer || m.user || m.miner || m.wallet || m.account;
+      if (typeof raw === 'object' && raw !== null) raw = raw.address || raw.wallet || raw.id;
+      const addr = String(raw || '?').toLowerCase();
+      const dw = parseDeployWei(m.deployedFormatted ?? m.deployed ?? 0);
+      const dEth = parseFloat(ethers.formatEther(dw));
+      if (dEth <= 0) continue;
+      totalPlayers++;
+      totalBoardEth += dEth;
+      if (addr === MY_ADDRESS) { myBetEth += dEth; continue; }
+      const cls = classifyBet(dEth);
+      classes[cls].push({ addr, bet: dEth });
     }
 
-    // === STEP 3: Jika API gagal/kosong tapi on-chain ada data → estimasi ===
-    if (!apiSuccess && totalBoardEth > 0) {
-      // Estimasi dari perBlock
-      if (perBlock >= 0.000080) {
-        classes.MID.push({ addr: 'est', bet: perBlock });
-      } else if (perBlock >= 0.000040) {
-        classes.SEMUT.push({ addr: 'est', bet: perBlock });
-      } else if (perBlock > 0) {
-        classes.MICRO.push({ addr: 'est', bet: perBlock });
-      }
-      totalPlayers = Math.max(1, Math.round(totalBoardEth / (perBlock > 0 ? perBlock : 0.00001)));
-    }
-
-    // Hitung statistik per kelas
+    // hitung statistik per kelas
     const stats = {};
     for (const cls in classes) {
       const arr = classes[cls];
@@ -322,10 +295,6 @@ async function takeSnapshot(roundId) {
       myBetEth,
       classes,
       stats,
-      blockData,
-      maxBlockEth,
-      avgPerBlock: perBlock,
-      apiSuccess,
       timestamp: Date.now(),
     };
   } catch (e) {

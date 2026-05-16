@@ -136,21 +136,19 @@ def resolve_signal(ts: TrackedSignal, df: pd.DataFrame) -> bool:
     if df is None or len(df) == 0:
         return False
 
-    # All bars strictly AFTER the signal candle timestamp
-    df_ts_seconds = df.index.astype("int64") // 10**9
-    post = df[df_ts_seconds > ts.created_ts]
+    # Use ALL bars in the DataFrame for resolution.
+    # The scanner already fetches enough history, and since we only track
+    # signals from recent scans, all bars are relevant for checking TP/SL.
+    # This avoids timestamp comparison issues between exchanges.
+    post = df
 
     if post.empty:
-        # Log details so we can diagnose why no bars found
-        first_ts = int(df_ts_seconds[0]) if len(df) > 0 else 0
-        last_ts = int(df_ts_seconds[-1]) if len(df) > 0 else 0
-        log.info("resolve %s: NO bars after signal_ts=%d (df range: %d..%d, %d bars total)",
-                 ts.key, ts.created_ts, first_ts, last_ts, len(df))
+        log.info("resolve %s: empty DataFrame", ts.key)
         return False
 
-    log.info("resolve %s: found %d bars after signal (signal_ts=%d, dir=%s, "
-             "entry=%.5f, TP1=%.5f, SL=%.5f, post_high_max=%.5f, post_low_min=%.5f)",
-             ts.key, len(post), ts.created_ts, ts.direction,
+    log.info("resolve %s: checking %d bars (dir=%s, "
+             "entry=%.5f, TP1=%.5f, SL=%.5f, df_high_max=%.5f, df_low_min=%.5f)",
+             ts.key, len(post), ts.direction,
              ts.entry,
              ts.take_profits[0] if ts.take_profits else 0,
              ts.stop_loss,

@@ -236,11 +236,11 @@ async function swapBeanToEth(amount) {
 }
 
 // ==========================================================
-// SNAPSHOT — ambil data live di detik 55
+// SNAPSHOT — ambil data REAL-TIME dari ronde yang sedang berjalan
 // ==========================================================
 async function takeSnapshot(roundId) {
   try {
-    const res = await axios.get(`${MINEBEAN_API}/api/round/${roundId}/miners`, { timeout: 4000 });
+    const res = await axios.get(`${MINEBEAN_API}/api/round/current`, { timeout: 4000 });
 
     // Track winning block dari ronde sebelumnya (kalau API kasih)
     if (res.data?.winningBlock != null) {
@@ -778,11 +778,11 @@ async function main() {
       }
 
       // ===== SNAPSHOT phase (detik ~52, tl = 7-9) =====
-      // Pakai data ronde N-1 (sudah settled) karena API tidak expose ronde aktif
-      if (!snapshotDone && tl >= 7 && tl <= 9 && rid === lastR) {
+      // Snap langsung dari /api/round/current — data real-time ronde aktif
+      if (!snapshotDone && tl >= 5 && tl <= 9 && rid === lastR) {
         snapshotDone = true;
-        console.log(`\n📸 SNAPSHOT R#${rid} (tl=${tl}s, ref R#${rid - 1})`);
-        const snap = await takeSnapshot(rid - 1);
+        console.log(`\n📸 SNAPSHOT R#${rid} (tl=${tl}s, LIVE from /current)`);
+        const snap = await takeSnapshot(rid);
         if (snap) {
           snap.roundId = rid;
           lastSnapshot = snap;

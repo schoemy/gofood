@@ -326,8 +326,10 @@ function makeDecision(snapshot) {
   }
 
   // === BET CALCULATION ===
-  // Jika MANUAL_BET aktif, pakai fixed bet
-  // Jika auto: dominasi MICRO + top SEMUT
+  // Strategy: cari zona kosong yang profitable
+  // - Ada MID player (0.00005-0.0001) → bet 0.00004 (di bawah mereka, share besar)
+  // - Tidak ada siapapun di zona 0.00008 → bet 0.00008 (dominasi total)
+  // - Manual override via /setbet
 
   let optimalBetEth = 0;
   let strategy = '';
@@ -336,27 +338,30 @@ function makeDecision(snapshot) {
     // Manual mode — fixed bet per block
     optimalBetEth = parseFloat(ethers.formatEther(MANUAL_BET));
     strategy = `MANUAL (${optimalBetEth.toFixed(6)} ETH/blok)`;
-  } else if (stats.SEMUT.count > 0) {
-    // ada SEMUT, overtake top SEMUT
-    optimalBetEth = stats.SEMUT.max * 1.15;
-    strategy = `Overtake SEMUT leader (${stats.SEMUT.max.toFixed(6)}) +15%`;
-  } else if (stats.MICRO.count > 0) {
-    // cuma MICRO, dominasi top MICRO
-    optimalBetEth = stats.MICRO.max * 1.5;
-    strategy = `Dominate MICRO leader (${stats.MICRO.max.toFixed(6)}) +50%`;
   } else {
-    optimalBetEth = parseFloat(ethers.formatEther(BET_PER_BLOCK_DEFAULT));
-    strategy = 'Default (no opponent)';
+    // === AUTO: ZONA KOSONG STRATEGY ===
+    // Cek apakah ada player di zona 0.00008 (range 0.00007 - 0.00009)
+    const { classes } = snapshot;
+    const allOpponents = [...classes.MICRO, ...classes.SEMUT, ...classes.MID, ...classes.HIGH, ...classes.WHALE];
+    const inZone80 = allOpponents.filter(p => p.bet >= 0.000070 && p.bet <= 0.000090);
+
+    if (stats.MID.count > 0) {
+      // Ada MID player (0.00005-0.0001) → bet 0.00004 (ambil share tanpa head-to-head)
+      optimalBetEth = 0.000040;
+      strategy = `UNDER-MID: ${stats.MID.count} MID player (max ${stats.MID.max.toFixed(6)}), bet 0.00004`;
+    } else if (inZone80.length === 0) {
+      // Tidak ada siapapun di zona 0.00008 → dominasi zona itu
+      optimalBetEth = 0.000080;
+      strategy = `DOMINATE-80: zona 0.00008 KOSONG, no competition`;
+    } else {
+      // Ada orang di zona 0.00008, fallback ke 0.00004
+      optimalBetEth = 0.000040;
+      strategy = `SAFE-40: zona 0.00008 ada ${inZone80.length} player, fallback`;
+    }
   }
 
-  // Apply MIN/MAX cap (hanya untuk auto mode)
-  const minEth = parseFloat(ethers.formatEther(MIN_BET_PER_BLOCK));
-  const maxEth = parseFloat(ethers.formatEther(MAX_BET_PER_BLOCK));
+  // No MIN/MAX cap untuk auto — strategy sudah fixed nominal
   let capped = false;
-  if (MANUAL_BET === null) {
-    if (optimalBetEth > maxEth) { optimalBetEth = maxEth; capped = true; }
-    if (optimalBetEth < minEth) { optimalBetEth = minEth; }
-  }
 
   const betWei = ethers.parseEther(optimalBetEth.toFixed(9));
   const totalEth = optimalBetEth * 25;

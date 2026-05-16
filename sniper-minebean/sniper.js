@@ -340,23 +340,19 @@ function makeDecision(snapshot) {
     strategy = `MANUAL (${optimalBetEth.toFixed(6)} ETH/blok)`;
   } else {
     // === AUTO: ZONA KOSONG STRATEGY ===
-    // Cek apakah ada player di zona 0.00008 (range 0.00007 - 0.00009)
+    // Cek apakah ada wallet lain yang bet >= 0.00008
     const { classes } = snapshot;
     const allOpponents = [...classes.MICRO, ...classes.SEMUT, ...classes.MID, ...classes.HIGH, ...classes.WHALE];
-    const inZone80 = allOpponents.filter(p => p.bet >= 0.000070 && p.bet <= 0.000090);
+    const hasHighBet = allOpponents.some(p => p.bet >= 0.000080);
 
-    if (stats.MID.count > 0) {
-      // Ada MID player (0.00005-0.0001) → bet 0.00004 (ambil share tanpa head-to-head)
+    if (hasHighBet) {
+      // Ada wallet lain bet >= 0.00008 → kita bet 0.00004 (ambil share, avoid head-to-head)
       optimalBetEth = 0.000040;
-      strategy = `UNDER-MID: ${stats.MID.count} MID player (max ${stats.MID.max.toFixed(6)}), bet 0.00004`;
-    } else if (inZone80.length === 0) {
-      // Tidak ada siapapun di zona 0.00008 → dominasi zona itu
-      optimalBetEth = 0.000080;
-      strategy = `DOMINATE-80: zona 0.00008 KOSONG, no competition`;
+      strategy = `UNDER: ada lawan ≥0.00008, bet 0.00004`;
     } else {
-      // Ada orang di zona 0.00008, fallback ke 0.00004
-      optimalBetEth = 0.000040;
-      strategy = `SAFE-40: zona 0.00008 ada ${inZone80.length} player, fallback`;
+      // Tidak ada siapapun bet >= 0.00008 → kita dominasi di 0.00008
+      optimalBetEth = 0.000080;
+      strategy = `DOMINATE: tidak ada lawan ≥0.00008, bet 0.00008`;
     }
   }
 

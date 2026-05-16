@@ -788,8 +788,8 @@ async function main() {
       // Snap langsung dari /api/round/current — data real-time ronde aktif
       if (!snapshotDone && tl >= 5 && tl <= 9 && rid === lastR) {
         snapshotDone = true;
-        console.log(`\n📸 SNAPSHOT R#${rid} (tl=${tl}s, LIVE from /current)`);
-        const snap = await takeSnapshot(rid);
+        console.log(`\n📸 SNAPSHOT R#${rid} (tl=${tl}s, ref R#${rid - 1})`);
+        const snap = await takeSnapshot(rid - 1);
         if (snap) {
           snap.roundId = rid;
           lastSnapshot = snap;

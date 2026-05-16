@@ -2,8 +2,8 @@ require('dotenv').config();
 const axios = require('axios');
 
 // ==========================================================
-// MINEBEAN WINNER ANALYSIS
-// Analisa history: kenapa winner bisa menang?
+// MINEBEAN WINNER DEEP ANALYSIS
+// Bedah per wallet di winning block — detail nominal bet
 // Usage: node analyze.js [jumlah_ronde]
 // Default: 20 ronde terakhir
 // ==========================================================
@@ -11,7 +11,6 @@ const axios = require('axios');
 const API = 'https://api.minebean.com';
 const ROUNDS_TO_ANALYZE = parseInt(process.argv[2]) || 20;
 
-// Delay antar request (ms) — respect rate limit
 const DELAY = 350;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -25,6 +24,11 @@ async function getSettledRounds(limit) {
 
 async function getRoundMiners(roundId) {
   const r = await axios.get(`${API}/api/round/${roundId}/miners`, { timeout: 10000 });
+  return r.data;
+}
+
+async function getRoundDetail(roundId) {
+  const r = await axios.get(`${API}/api/round/${roundId}`, { timeout: 10000 });
   return r.data;
 }
 
@@ -44,80 +48,76 @@ function analyzeRound(roundData, roundId) {
     let deployedEth = 0;
     try {
       deployedEth = parseFloat(deployedStr);
-      if (deployedEth > 1000) deployedEth = deployedEth / 1e18; // wei to eth
+      if (deployedEth > 1000) deployedEth = deployedEth / 1e18;
     } catch (_) {}
 
     const beanReward = parseFloat(m.beanReward || m.bean_reward || 0);
+    const ethReward = parseFloat(m.ethReward || m.eth_reward || 0);
     const blocks = m.blocks || m.blockIds || [];
 
     allMiners.push({
-      addr: addr.slice(0, 10) + '...',
-      addrFull: addr,
+      addr,
+      addrShort: addr.slice(0, 8) + '...' + addr.slice(-4),
       deployedEth,
       beanReward,
+      ethReward,
       blocks,
       isWinner: beanReward > 0,
     });
   }
 
-  // Total stats
-  const totalPlayers = allMiners.length;
-  const totalDeployed = allMiners.reduce((s, m) => s + m.deployedEth, 0);
-
-  // Winners (yang dapat BEAN > 0)
+  // Winners & losers
   const winners = allMiners.filter(m => m.isWinner);
   const losers = allMiners.filter(m => !m.isWinner);
 
-  // Determine mode: Lotre vs Split
+  // Mode
   const maxBean = Math.max(...winners.map(w => w.beanReward), 0);
   const isLotre = maxBean >= 0.9 && winners.length === 1;
   const isSplit = winners.length > 1;
   const mode = isLotre ? 'LOTRE' : (isSplit ? 'SPLIT' : 'UNKNOWN');
 
-  // Winner analysis
-  const winnerAnalysis = winners.map(w => {
-    const sharePercent = totalDeployed > 0 ? (w.deployedEth / totalDeployed * 100) : 0;
-    const beanValue = w.beanReward;
+  // Total deployed di seluruh round
+  const totalDeployedAll = allMiners.reduce((s, m) => s + m.deployedEth, 0);
 
-    // Kenapa dia menang?
-    let reason = '';
-    if (isLotre) {
-      reason = `LOTRE: weighted random, bet ${w.deployedEth.toFixed(6)} ETH = higher probability`;
-    } else if (isSplit) {
-      reason = `SPLIT: proporsional share (${sharePercent.toFixed(1)}% of total deployed)`;
-    }
+  // Total deployed oleh winners saja (= total di winning block)
+  const totalWinnerDeployed = winners.reduce((s, w) => s + w.deployedEth, 0);
 
+  // Sort winners by bet (besar ke kecil)
+  winners.sort((a, b) => b.deployedEth - a.deployedEth);
+
+  // Hitung share tiap winner
+  const winnersDetail = winners.map(w => {
+    const shareOfWinBlock = totalWinnerDeployed > 0 ? (w.deployedEth / totalWinnerDeployed * 100) : 0;
+    const shareOfTotal = totalDeployedAll > 0 ? (w.deployedEth / totalDeployedAll * 100) : 0;
     return {
       ...w,
-      sharePercent,
-      reason,
+      shareOfWinBlock,
+      shareOfTotal,
     };
   });
-
-  // Rank winners by bet size
-  winnerAnalysis.sort((a, b) => b.deployedEth - a.deployedEth);
 
   return {
     roundId,
     winningBlock,
     mode,
-    totalPlayers,
-    totalDeployed,
+    totalPlayers: allMiners.length,
+    totalDeployedAll,
     winnersCount: winners.length,
     losersCount: losers.length,
-    winners: winnerAnalysis,
-    topWinnerBet: winnerAnalysis[0]?.deployedEth || 0,
-    topWinnerBean: winnerAnalysis[0]?.beanReward || 0,
-    avgWinnerBet: winners.length > 0 ? winners.reduce((s, w) => s + w.deployedEth, 0) / winners.length : 0,
-    avgLoserBet: losers.length > 0 ? losers.reduce((s, l) => s + l.deployedEth, 0) / losers.length : 0,
+    totalWinnerDeployed,
+    avgBetPerBlock: totalDeployedAll / 25,
+    winnersDetail,
+    minWinnerBet: winners.length > 0 ? winners[winners.length - 1].deployedEth : 0,
+    maxWinnerBet: winners.length > 0 ? winners[0].deployedEth : 0,
   };
 }
 
 async function main() {
-  console.log(`\n🔍 MINEBEAN WINNER ANALYSIS — Last ${ROUNDS_TO_ANALYZE} rounds\n`);
-  console.log('='.repeat(70));
+  console.log(`\n🔬 MINEBEAN DEEP WINNER ANALYSIS — Last ${ROUNDS_TO_ANALYZE} rounds`);
+  console.log(`   Bedah nominal bet per wallet di winning block\n`);
+  console.log('='.repeat(80));
 
-  // Get settled rounds
+  // Fetch rounds
   console.log('📡 Fetching settled rounds...');
   let rounds;
   try {
@@ -131,13 +131,12 @@ async function main() {
     console.log('❌ Tidak ada data ronde');
     return;
   }
-
   console.log(`✅ Got ${rounds.length} rounds\n`);
 
   const results = [];
+  const allWinnerBets = [];
+  const allLoserBets = [];
   let lotreCount = 0, splitCount = 0;
-  let totalWinnerBetSum = 0, totalLoserBetSum = 0;
-  let bigBetWinCount = 0, smallBetWinCount = 0;
 
   for (let i = 0; i < rounds.length; i++) {
     const round = rounds[i];
@@ -151,80 +150,119 @@ async function main() {
       const analysis = analyzeRound(data, roundId);
 
       if (!analysis) {
-        console.log(`  R#${roundId}: ⚠️ No winner data`);
+        console.log(`  R#${roundId}: ⚠️ No winner data\n`);
         continue;
       }
 
       results.push(analysis);
-
-      // Stats
       if (analysis.mode === 'LOTRE') lotreCount++;
       if (analysis.mode === 'SPLIT') splitCount++;
-      totalWinnerBetSum += analysis.avgWinnerBet;
-      totalLoserBetSum += analysis.avgLoserBet;
-      if (analysis.topWinnerBet > analysis.avgLoserBet) bigBetWinCount++;
-      else smallBetWinCount++;
 
-      // Print per round
-      const topW = analysis.winners[0];
-      console.log(`  R#${roundId} | Block: ${analysis.winningBlock} | ${analysis.mode} | Players: ${analysis.totalPlayers} | Winners: ${analysis.winnersCount}`);
-      if (topW) {
-        console.log(`    👑 Top: ${topW.addr} bet ${topW.deployedEth.toFixed(6)} ETH → ${topW.beanReward.toFixed(4)} BEAN`);
-        console.log(`    💡 ${topW.reason}`);
+      // Collect all bets
+      for (const w of analysis.winnersDetail) allWinnerBets.push(w.deployedEth);
+      // Losers avg (approximate)
+      if (analysis.losersCount > 0) {
+        const losersTotal = analysis.totalDeployedAll - analysis.totalWinnerDeployed;
+        allLoserBets.push(losersTotal / analysis.losersCount);
       }
-      if (analysis.winners.length > 1) {
-        console.log(`    📊 All winners:`);
-        for (const w of analysis.winners.slice(0, 5)) {
-          console.log(`       ${w.addr} | ${w.deployedEth.toFixed(6)} ETH | ${w.beanReward.toFixed(4)} BEAN | share ${w.sharePercent.toFixed(1)}%`);
-        }
-        if (analysis.winners.length > 5) console.log(`       ... +${analysis.winners.length - 5} more`);
+
+      // === PRINT DETAIL PER ROUND ===
+      console.log(`┌─ R#${roundId} | 🎯 Winning Block: ${analysis.winningBlock} | Mode: ${analysis.mode}`);
+      console.log(`│  Players: ${analysis.totalPlayers} | Total deployed: ${analysis.totalDeployedAll.toFixed(6)} ETH`);
+      console.log(`│  Winners: ${analysis.winnersCount} | Winner pool: ${analysis.totalWinnerDeployed.toFixed(6)} ETH`);
+      console.log(`│`);
+      console.log(`│  📋 DETAIL PER WALLET DI WINNING BLOCK:`);
+      console.log(`│  ${'─'.repeat(70)}`);
+      console.log(`│  ${'Wallet'.padEnd(18)} | ${'Bet (ETH)'.padEnd(14)} | ${'BEAN Won'.padEnd(10)} | ${'Share Block'.padEnd(12)} | Notes`);
+      console.log(`│  ${'─'.repeat(70)}`);
+
+      for (const w of analysis.winnersDetail) {
+        let note = '';
+        if (w.deployedEth === analysis.maxWinnerBet && analysis.winnersCount > 1) note = '👑 BIGGEST';
+        if (w.deployedEth === analysis.minWinnerBet && analysis.winnersCount > 1 && analysis.minWinnerBet !== analysis.maxWinnerBet) note = '🐜 SMALLEST';
+        if (analysis.mode === 'LOTRE') note = '🎰 JACKPOT';
+
+        console.log(`│  ${w.addrShort.padEnd(18)} | ${w.deployedEth.toFixed(8).padEnd(14)} | ${w.beanReward.toFixed(4).padEnd(10)} | ${w.shareOfWinBlock.toFixed(1).padStart(5)}%${' '.repeat(6)} | ${note}`);
       }
-      console.log('');
+
+      console.log(`│  ${'─'.repeat(70)}`);
+      console.log(`│  Min bet winner: ${analysis.minWinnerBet.toFixed(8)} ETH`);
+      console.log(`│  Max bet winner: ${analysis.maxWinnerBet.toFixed(8)} ETH`);
+      console.log(`│  Ratio max/min : ${analysis.minWinnerBet > 0 ? (analysis.maxWinnerBet / analysis.minWinnerBet).toFixed(1) + 'x' : 'N/A'}`);
+      console.log(`└${'─'.repeat(79)}\n`);
 
     } catch (e) {
-      console.log(`  R#${roundId}: ❌ ${e.message}`);
+      console.log(`  R#${roundId}: ❌ ${e.message}\n`);
     }
   }
 
-  // Summary
-  console.log('\n' + '='.repeat(70));
-  console.log('📊 SUMMARY');
-  console.log('='.repeat(70));
-  console.log(`Rounds analyzed  : ${results.length}`);
-  console.log(`Mode LOTRE       : ${lotreCount} (${(lotreCount/results.length*100).toFixed(0)}%)`);
-  console.log(`Mode SPLIT       : ${splitCount} (${(splitCount/results.length*100).toFixed(0)}%)`);
-  console.log(`Avg winner bet   : ${(totalWinnerBetSum/results.length).toFixed(6)} ETH`);
-  console.log(`Avg loser bet    : ${(totalLoserBetSum/results.length).toFixed(6)} ETH`);
-  console.log(`Big bet wins     : ${bigBetWinCount} (${(bigBetWinCount/results.length*100).toFixed(0)}%)`);
-  console.log(`Small bet wins   : ${smallBetWinCount} (${(smallBetWinCount/results.length*100).toFixed(0)}%)`);
+  // === AGGREGATE STATS ===
+  console.log('\n' + '='.repeat(80));
+  console.log('📊 AGGREGATE ANALYSIS — All winner bets combined');
+  console.log('='.repeat(80));
+
+  if (allWinnerBets.length === 0) {
+    console.log('No data');
+    return;
+  }
+
+  allWinnerBets.sort((a, b) => a - b);
+
+  // Bucketing
+  const buckets = {
+    '< 0.000005': 0,
+    '0.000005 - 0.00001': 0,
+    '0.00001 - 0.00003': 0,
+    '0.00003 - 0.00005': 0,
+    '0.00005 - 0.0001': 0,
+    '0.0001 - 0.0003': 0,
+    '> 0.0003': 0,
+  };
+
+  for (const bet of allWinnerBets) {
+    if (bet < 0.000005) buckets['< 0.000005']++;
+    else if (bet < 0.00001) buckets['0.000005 - 0.00001']++;
+    else if (bet < 0.00003) buckets['0.00001 - 0.00003']++;
+    else if (bet < 0.00005) buckets['0.00003 - 0.00005']++;
+    else if (bet < 0.0001) buckets['0.00005 - 0.0001']++;
+    else if (bet < 0.0003) buckets['0.0001 - 0.0003']++;
+    else buckets['> 0.0003']++;
+  }
+
+  console.log(`\n🎯 DISTRIBUSI BET WINNER (${allWinnerBets.length} wallets total):\n`);
+  const maxCount = Math.max(...Object.values(buckets));
+  for (const [range, count] of Object.entries(buckets)) {
+    const pct = (count / allWinnerBets.length * 100).toFixed(0);
+    const bar = '█'.repeat(Math.round(count / maxCount * 30)) || (count > 0 ? '▏' : '');
+    console.log(`  ${range.padEnd(22)} | ${bar} ${count} (${pct}%)`);
+  }
+
+  // Percentiles
+  const p = (pct) => allWinnerBets[Math.floor(allWinnerBets.length * pct / 100)] || 0;
+  console.log(`\n📐 PERCENTILES winner bet:`);
+  console.log(`  Min (P0)  : ${allWinnerBets[0].toFixed(8)} ETH`);
+  console.log(`  P25       : ${p(25).toFixed(8)} ETH`);
+  console.log(`  Median P50: ${p(50).toFixed(8)} ETH`);
+  console.log(`  P75       : ${p(75).toFixed(8)} ETH`);
+  console.log(`  Max (P100): ${allWinnerBets[allWinnerBets.length - 1].toFixed(8)} ETH`);
+
+  // Mode stats
+  console.log(`\n🎰 MODE BREAKDOWN:`);
+  console.log(`  LOTRE : ${lotreCount}/${results.length} (${(lotreCount/results.length*100).toFixed(0)}%) — 1 orang menang semua BEAN`);
+  console.log(`  SPLIT : ${splitCount}/${results.length} (${(splitCount/results.length*100).toFixed(0)}%) — dibagi proporsional`);
+
+  // Optimal bet recommendation
+  const median = p(50);
+  const p25 = p(25);
+  const p75 = p(75);
+  console.log(`\n💡 REKOMENDASI BERDASARKAN DATA:`);
+  console.log(`  Sweet spot bet/blok: ${p25.toFixed(6)} - ${p75.toFixed(6)} ETH`);
+  console.log(`  Median winner bet  : ${median.toFixed(6)} ETH`);
+  console.log(`  Total/ronde (×25)  : ${(median * 25).toFixed(6)} ETH`);
+  console.log(`  Di USD (~$2500/ETH): $${(median * 25 * 2500).toFixed(4)}`);
   console.log('');
-
-  // Winning block distribution
-  const blockFreq = {};
-  for (const r of results) {
-    blockFreq[r.winningBlock] = (blockFreq[r.winningBlock] || 0) + 1;
-  }
-  const sorted = Object.entries(blockFreq).sort((a, b) => b[1] - a[1]);
-  console.log('🎲 Winning block frequency (top 10):');
-  for (const [block, count] of sorted.slice(0, 10)) {
-    const bar = '█'.repeat(count);
-    console.log(`   Block ${String(block).padStart(2)}: ${bar} (${count}x = ${(count/results.length*100).toFixed(0)}%)`);
-  }
-
-  // Key insights
-  console.log('\n💡 KEY INSIGHTS:');
-  if (lotreCount > splitCount) {
-    console.log('   → Mode LOTRE dominan: bet BESAR di winning block = peluang lebih tinggi (weighted random)');
-  } else {
-    console.log('   → Mode SPLIT dominan: semua di winning block dapat, proporsional ke bet');
-  }
-  if (bigBetWinCount > smallBetWinCount) {
-    console.log('   → Winner cenderung yang BET LEBIH BESAR (dominate strategy works)');
-  } else {
-    console.log('   → Small bet juga sering menang (luck factor tinggi, spread strategy viable)');
-  }
-  console.log('   → Semua 25 blok uniform random (VRF) — TIDAK ada blok "hot"');
-  console.log('   → Strategy terbaik: spread ke semua blok + pastikan share besar di winning block');
+  console.log(`  💬 Untuk /setbet, gunakan range ${p25.toFixed(6)} - ${p75.toFixed(6)}`);
+  console.log(`     Contoh: /setbet ${median.toFixed(6)}`);
   console.log('');
 }
 

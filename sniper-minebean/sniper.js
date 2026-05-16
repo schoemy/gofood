@@ -339,20 +339,29 @@ function makeDecision(snapshot) {
     optimalBetEth = parseFloat(ethers.formatEther(MANUAL_BET));
     strategy = `MANUAL (${optimalBetEth.toFixed(6)} ETH/blok)`;
   } else {
-    // === AUTO: ZONA KOSONG STRATEGY ===
-    // Cek apakah ada wallet lain yang bet >= 0.00008
-    const { classes } = snapshot;
-    const allOpponents = [...classes.MICRO, ...classes.SEMUT, ...classes.MID, ...classes.HIGH, ...classes.WHALE];
-    const hasHighBet = allOpponents.some(p => p.bet >= 0.000080);
+    // === AUTO: IKUT BOBOT TERBESAR ===
+    // Hitung total bobot per kelas
+    const microTotal = stats.MICRO.total || 0;   // total ETH semua MICRO
+    const semutTotal = stats.SEMUT.total || 0;   // total ETH semua SEMUT
+    const midTotal = stats.MID.total || 0;       // total ETH semua MID
 
-    if (hasHighBet) {
-      // Ada wallet lain bet >= 0.00008 → kita bet 0.00004 (ambil share, avoid head-to-head)
-      optimalBetEth = 0.000040;
-      strategy = `UNDER: ada lawan ≥0.00008, bet 0.00004`;
-    } else {
-      // Tidak ada siapapun bet >= 0.00008 → kita dominasi di 0.00008
+    // Cari kelas dengan bobot terbesar
+    if (midTotal >= semutTotal && midTotal >= microTotal && midTotal > 0) {
+      // MID punya bobot terbesar → ikut level MID (0.00008)
       optimalBetEth = 0.000080;
-      strategy = `DOMINATE: tidak ada lawan ≥0.00008, bet 0.00008`;
+      strategy = `IKUT-MID: bobot MID ${midTotal.toFixed(6)} > SEMUT ${semutTotal.toFixed(6)} > MICRO ${microTotal.toFixed(6)}`;
+    } else if (semutTotal >= microTotal && semutTotal > 0) {
+      // SEMUT punya bobot terbesar → ikut level SEMUT (0.00004)
+      optimalBetEth = 0.000040;
+      strategy = `IKUT-SEMUT: bobot SEMUT ${semutTotal.toFixed(6)} > MID ${midTotal.toFixed(6)} > MICRO ${microTotal.toFixed(6)}`;
+    } else if (microTotal > 0) {
+      // Hanya MICRO → dominasi di 0.00008 (kita jadi terbesar)
+      optimalBetEth = 0.000080;
+      strategy = `DOMINATE-MICRO: hanya MICRO ${microTotal.toFixed(6)}, kita 0.00008`;
+    } else {
+      // Tidak ada lawan sama sekali → bet 0.00008
+      optimalBetEth = 0.000080;
+      strategy = `NO-OPPONENT: board kosong, bet 0.00008`;
     }
   }
 

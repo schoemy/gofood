@@ -238,98 +238,67 @@ async function swapBeanToEth(amount) {
 }
 
 // ==========================================================
-// SNAPSHOT — ambil data REAL-TIME langsung dari contract on-chain
-// getRoundDeployed(roundId) → uint256[25] (total ETH per blok)
+// SNAPSHOT — COMBINE: on-chain getRoundDeployed + API per-wallet
+// 1. Contract → confirm board size (totalBoard, perBlock)
+// 2. API → breakdown per wallet untuk classify kelas
 // ==========================================================
 async function takeSnapshot(roundId) {
   try {
-    // Baca langsung dari contract: total ETH deployed per blok (25 blok)
+    // === STEP 1: On-chain data (pasti akurat) ===
     const deployed = await grid.getRoundDeployed(roundId);
-
-    // Parse data per blok
     let totalBoardEth = 0;
     let maxBlockEth = 0;
-    let minBlockEth = Infinity;
-    let nonEmptyBlocks = 0;
     const blockData = [];
 
     for (let i = 0; i < 25; i++) {
       const ethVal = parseFloat(ethers.formatEther(deployed[i]));
       blockData.push(ethVal);
       totalBoardEth += ethVal;
-      if (ethVal > 0) {
-        nonEmptyBlocks++;
-        if (ethVal > maxBlockEth) maxBlockEth = ethVal;
-        if (ethVal < minBlockEth) minBlockEth = ethVal;
-      }
+      if (ethVal > maxBlockEth) maxBlockEth = ethVal;
     }
-    if (minBlockEth === Infinity) minBlockEth = 0;
 
-    // Estimasi avg bet per player berdasarkan totalDeployed / jumlah blok aktif
-    // Karena setiap player deploy ke semua 25 blok (amountPerBlock × 25),
-    // totalBoardEth = sum(amountPerBlock_i × jumlah_blok_i) untuk semua player
-    // Estimasi jumlah player = totalBoardEth / (avgPerBlock × 25)
-    // Tapi kita bisa estimasi dari info contract juga
-    const roundInfo = await grid.getCurrentRoundInfo();
-    const totalDeployedWei = roundInfo.totalDeployed;
-    const totalDeployedEth = parseFloat(ethers.formatEther(totalDeployedWei));
+    const perBlock = totalBoardEth / 25; // avg ETH per blok (asumsi semua deploy 25 blok)
 
-    // Estimasi: rata-rata ETH per blok jika semua player spread 25 blok
-    const avgPerBlock = nonEmptyBlocks > 0 ? totalBoardEth / 25 : 0;
-
-    // Classify berdasarkan max blok — estimasi apakah ada big player
-    // maxBlockEth tinggi = ada player besar
-    // Kita buat "virtual classes" berdasarkan distribusi blok
+    // === STEP 2: API per-wallet breakdown (best effort) ===
     const classes = { MICRO: [], SEMUT: [], MID: [], HIGH: [], WHALE: [] };
+    let totalPlayers = 0;
+    let myBetEth = 0;
+    let apiSuccess = false;
 
-    // Estimasi player dari pola blok:
-    // Jika semua blok merata → banyak micro player
-    // Jika ada blok sangat tinggi → ada big player
-    // Kita gunakan avgPerBlock sebagai proxy bet per player
-    if (totalBoardEth > 0) {
-      // Hitung estimasi jumlah player dari minerCount di rounds mapping
-      // Atau gunakan heuristik: total / avgBetPerPlayer
-      // Untuk sekarang, kita estimasi dari distribusi blok
-
-      // Cek apakah ada "big deployer" — blok dengan ETH jauh di atas rata-rata
-      for (let i = 0; i < 25; i++) {
-        if (blockData[i] <= 0) continue;
-        // Setiap blok punya total ETH = sum of all players' amountPerBlock di blok itu
-        // Kita tidak bisa breakdown per player, tapi bisa estimasi level
-      }
-
-      // Estimasi berdasarkan total board:
-      // Anggap rata-rata player deploy ke semua 25 blok
-      // avgBetPerPlayer = totalBoardEth / estimatedPlayers / 25
-      // Tapi kita tidak tahu jumlah player pasti
-
-      // HEURISTIK SEDERHANA:
-      // Cek maxBlockEth vs avgPerBlock — jika ratio besar = ada dominant player
-      const ratio = avgPerBlock > 0 ? maxBlockEth / avgPerBlock : 1;
-
-      if (maxBlockEth >= 0.000300 * 25) {
-        classes.WHALE.push({ addr: 'unknown', bet: maxBlockEth / 25 });
-      }
-      if (maxBlockEth >= 0.000100 * 25) {
-        classes.HIGH.push({ addr: 'unknown', bet: maxBlockEth / 25 });
-      }
-
-      // Estimasi kelas dari totalBoardEth
-      // Jika total kecil (< 0.0005) → mostly micro
-      // Jika total medium → campuran
-      if (totalBoardEth >= 0.001) {
-        // Ada MID-level players
-        const estMidBet = totalBoardEth / (nonEmptyBlocks > 0 ? Math.ceil(totalBoardEth / 0.002) : 1);
-        if (estMidBet >= 0.000040) {
-          classes.MID.push({ addr: 'est', bet: estMidBet });
-        } else {
-          classes.SEMUT.push({ addr: 'est', bet: estMidBet });
+    try {
+      const res = await axios.get(`${MINEBEAN_API}/api/round/current`, { timeout: 3000 });
+      let miners = res.data?.miners || res.data?.data?.miners || res.data?.data || res.data;
+      if (!Array.isArray(miners) && miners && typeof miners === 'object') miners = Object.values(miners);
+      if (Array.isArray(miners) && miners.length > 0) {
+        apiSuccess = true;
+        for (const m of miners) {
+          let raw = m.address || m.walletAddress || m.deployer || m.user || m.miner || m.wallet || m.account;
+          if (typeof raw === 'object' && raw !== null) raw = raw.address || raw.wallet || raw.id;
+          const addr = String(raw || '?').toLowerCase();
+          const dw = parseDeployWei(m.deployedFormatted ?? m.deployed ?? 0);
+          const dEth = parseFloat(ethers.formatEther(dw));
+          if (dEth <= 0) continue;
+          totalPlayers++;
+          if (addr === MY_ADDRESS) { myBetEth += dEth; continue; }
+          const cls = classifyBet(dEth);
+          classes[cls].push({ addr, bet: dEth });
         }
-      } else if (totalBoardEth >= 0.0003) {
-        classes.SEMUT.push({ addr: 'est', bet: totalBoardEth / 25 });
-      } else if (totalBoardEth > 0) {
-        classes.MICRO.push({ addr: 'est', bet: totalBoardEth / 25 });
       }
+    } catch (e) {
+      // API gagal, fallback ke estimasi dari on-chain
+    }
+
+    // === STEP 3: Jika API gagal/kosong tapi on-chain ada data → estimasi ===
+    if (!apiSuccess && totalBoardEth > 0) {
+      // Estimasi dari perBlock
+      if (perBlock >= 0.000080) {
+        classes.MID.push({ addr: 'est', bet: perBlock });
+      } else if (perBlock >= 0.000040) {
+        classes.SEMUT.push({ addr: 'est', bet: perBlock });
+      } else if (perBlock > 0) {
+        classes.MICRO.push({ addr: 'est', bet: perBlock });
+      }
+      totalPlayers = Math.max(1, Math.round(totalBoardEth / (perBlock > 0 ? perBlock : 0.00001)));
     }
 
     // Hitung statistik per kelas
@@ -347,15 +316,16 @@ async function takeSnapshot(roundId) {
 
     return {
       roundId,
-      totalPlayers: nonEmptyBlocks > 0 ? Math.max(1, Math.round(totalBoardEth / (avgPerBlock || 0.00001))) : 0,
+      totalPlayers,
       totalBoardEth,
       totalBoardUsd: totalBoardEth * currentEthPriceUsd,
-      myBetEth: 0,
+      myBetEth,
       classes,
       stats,
       blockData,
       maxBlockEth,
-      avgPerBlock,
+      avgPerBlock: perBlock,
+      apiSuccess,
       timestamp: Date.now(),
     };
   } catch (e) {
@@ -403,39 +373,24 @@ function makeDecision(snapshot) {
     optimalBetEth = parseFloat(ethers.formatEther(MANUAL_BET));
     strategy = `MANUAL (${optimalBetEth.toFixed(6)} ETH/blok)`;
   } else {
-    // === AUTO: IKUT BOBOT TERBESAR (dari on-chain data) ===
-    // totalBoardEth = total semua deploy di ronde ini (langsung dari contract)
-    // Kita pakai totalBoardEth sebagai indikator kekuatan lawan
-
-    // Hitung total bobot per kelas
+    // === AUTO: IKUT BOBOT TERBESAR (per-wallet dari API + validated by on-chain) ===
     const microTotal = stats.MICRO.total || 0;
     const semutTotal = stats.SEMUT.total || 0;
     const midTotal = stats.MID.total || 0;
 
-    // Kalau board besar (ada big player), gunakan heuristik dari maxBlockEth
-    const maxBlk = snapshot.maxBlockEth || 0;
-    const avgBlk = snapshot.avgPerBlock || 0;
-
-    // Estimasi: jika max blok >> avg, ada dominant player
-    // maxBlockEth / 25 = estimasi bet terbesar per blok per player
-    const estBiggestBet = maxBlk > 0 ? maxBlk : 0; // total di blok terbesar
-
-    if (estBiggestBet >= 0.000080) {
-      // Ada yang deploy cukup besar (≥0.00008 per blok equiv) → kita 0.00004
+    // Cari kelas dengan bobot terbesar
+    if (midTotal >= semutTotal && midTotal >= microTotal && midTotal > 0) {
+      optimalBetEth = 0.000080;
+      strategy = `IKUT-MID: bobot MID ${midTotal.toFixed(6)} > SEMUT ${semutTotal.toFixed(6)} > MICRO ${microTotal.toFixed(6)}`;
+    } else if (semutTotal >= microTotal && semutTotal > 0) {
       optimalBetEth = 0.000040;
-      strategy = `UNDER: board ${totalBoardEth.toFixed(6)}, max blok ${maxBlk.toFixed(6)}, bet 0.00004`;
-    } else if (totalBoardEth >= 0.0005) {
-      // Board medium, ikut level 0.00008 untuk dominasi
+      strategy = `IKUT-SEMUT: bobot SEMUT ${semutTotal.toFixed(6)} > MID ${midTotal.toFixed(6)} > MICRO ${microTotal.toFixed(6)}`;
+    } else if (microTotal > 0) {
       optimalBetEth = 0.000080;
-      strategy = `DOMINATE: board ${totalBoardEth.toFixed(6)} medium, bet 0.00008`;
-    } else if (totalBoardEth > 0) {
-      // Board kecil, dominasi total
-      optimalBetEth = 0.000080;
-      strategy = `DOMINATE-SMALL: board ${totalBoardEth.toFixed(6)} kecil, bet 0.00008`;
+      strategy = `DOMINATE-MICRO: hanya MICRO ${microTotal.toFixed(6)}, kita 0.00008`;
     } else {
-      // Board kosong
       optimalBetEth = 0.000080;
-      strategy = `NO-OPPONENT: board kosong, bet 0.00008`;
+      strategy = `NO-OPPONENT: board ${totalBoardEth.toFixed(6)}, bet 0.00008`;
     }
   }
 

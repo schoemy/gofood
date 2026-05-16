@@ -136,18 +136,19 @@ def resolve_signal(ts: TrackedSignal, df: pd.DataFrame) -> bool:
     if df is None or len(df) == 0:
         return False
 
-    # Use ALL bars in the DataFrame for resolution.
-    # The scanner already fetches enough history, and since we only track
-    # signals from recent scans, all bars are relevant for checking TP/SL.
-    # This avoids timestamp comparison issues between exchanges.
-    post = df
+    # Use only the LAST portion of the DataFrame (post-signal approximation).
+    # With LOOKBACK=500 and scans every 15 min, signal is at most a few bars
+    # old. Using last 50% ensures we cover post-signal data without checking
+    # ancient history that could cause false TP/SL hits.
+    cutoff = max(len(df) // 2, 10)
+    post = df.iloc[-cutoff:]
 
     if post.empty:
-        log.info("resolve %s: empty DataFrame", ts.key)
+        log.info("resolve %s: empty post slice", ts.key)
         return False
 
-    log.info("resolve %s: checking %d bars (dir=%s, "
-             "entry=%.5f, TP1=%.5f, SL=%.5f, df_high_max=%.5f, df_low_min=%.5f)",
+    log.info("resolve %s: checking last %d bars (dir=%s, "
+             "entry=%.5f, TP1=%.5f, SL=%.5f, slice_high_max=%.5f, slice_low_min=%.5f)",
              ts.key, len(post), ts.direction,
              ts.entry,
              ts.take_profits[0] if ts.take_profits else 0,

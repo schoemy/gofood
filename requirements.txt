@@ -3,3 +3,6 @@ numpy>=1.26
 pandas>=2.0
 requests>=2.31.0
 python-dotenv>=1.0.0
+
+# AI Agent (Telegram + Claude API)
+# No additional dependencies needed — uses requests + python-dotenv already listed above

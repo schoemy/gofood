@@ -22,6 +22,21 @@ from bot.indicators import Signal
 
 log = logging.getLogger(__name__)
 
+# Max number of recent bars to check for TP/SL per timeframe.
+# Signal is created from iloc[-2] of a scan. On the next scan (15min later),
+# we only need to check the most recent bars after entry.
+# Generous buffer: check last N bars where N covers ~24h of data per TF.
+RESOLVE_BARS = {
+    "1m": 1440,
+    "5m": 288,
+    "15m": 96,    # 96 x 15m = 24h
+    "30m": 48,    # 48 x 30m = 24h
+    "1h": 24,     # 24 x 1h = 24h
+    "4h": 12,     # 12 x 4h = 48h (2 days, generous for 4h signals)
+    "1d": 7,
+}
+DEFAULT_RESOLVE_BARS = 48
+
 
 @dataclass
 class TrackedSignal:
@@ -125,8 +140,11 @@ class Ledger:
 
 def resolve_signal(ts: TrackedSignal, df: pd.DataFrame) -> bool:
     """
-    Given OHLCV since the signal was created, determine whether TP or SL hit.
-    Mutates `ts` in place; returns True if the status changed.
+    Given OHLCV data, check only the RECENT bars (based on timeframe)
+    to determine whether TP or SL hit after signal entry.
+
+    Uses a fixed lookback window per timeframe (~24h worth of bars) to
+    avoid false positives from ancient price history.
 
     Conservative: if both SL and TP hit in the same candle, we assume SL hit
     first (worst-case). This matches standard backtest convention.
@@ -136,20 +154,17 @@ def resolve_signal(ts: TrackedSignal, df: pd.DataFrame) -> bool:
     if df is None or len(df) == 0:
         return False
 
-    # Use only the LAST portion of the DataFrame (post-signal approximation).
-    # With LOOKBACK=500 and scans every 15 min, signal is at most a few bars
-    # old. Using last 50% ensures we cover post-signal data without checking
-    # ancient history that could cause false TP/SL hits.
-    cutoff = max(len(df) // 2, 10)
-    post = df.iloc[-cutoff:]
+    # Only check recent bars — enough to cover ~24h after signal
+    n_bars = RESOLVE_BARS.get(ts.timeframe, DEFAULT_RESOLVE_BARS)
+    post = df.iloc[-n_bars:] if len(df) > n_bars else df
 
     if post.empty:
-        log.info("resolve %s: empty post slice", ts.key)
+        log.info("resolve %s: empty slice", ts.key)
         return False
 
-    log.info("resolve %s: checking last %d bars (dir=%s, "
-             "entry=%.5f, TP1=%.5f, SL=%.5f, slice_high_max=%.5f, slice_low_min=%.5f)",
-             ts.key, len(post), ts.direction,
+    log.info("resolve %s: checking last %d bars of %s (dir=%s, "
+             "entry=%.5f, TP1=%.5f, SL=%.5f, slice_high=%.5f, slice_low=%.5f)",
+             ts.key, len(post), ts.timeframe, ts.direction,
              ts.entry,
              ts.take_profits[0] if ts.take_profits else 0,
              ts.stop_loss,

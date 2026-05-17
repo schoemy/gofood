@@ -35,6 +35,11 @@ const CLASS_MID_MAX = 0.000100;
 const CLASS_HIGH_MAX = 0.000300;
 // > 0.000300 = WHALE
 
+// === MICRO SUB-CLASS THRESHOLDS ===
+const MICRO_BAWAH_MAX = 0.000013;   // MICRO-Bawah: < 0.000013
+const MICRO_MID_MAX = 0.000026;     // MICRO-Mid:   0.000013 - 0.000026
+// MICRO-Atas: 0.000026 - 0.000040
+
 // === SKIP CONDITIONS ===
 let SKIP_IF_WHALE = true;       // skip kalau ada >=1 whale
 let SKIP_IF_HIGH_GTE = 1;        // skip kalau >=1 HIGH player (0.0001-0.0003)
@@ -131,6 +136,12 @@ function classifyBet(ethValue) {
   if (ethValue < CLASS_MID_MAX) return 'MID';
   if (ethValue < CLASS_HIGH_MAX) return 'HIGH';
   return 'WHALE';
+}
+
+function classifyMicroSub(ethValue) {
+  if (ethValue < MICRO_BAWAH_MAX) return 'MICRO_BAWAH';
+  if (ethValue < MICRO_MID_MAX) return 'MICRO_MID';
+  return 'MICRO_ATAS';
 }
 
 async function updatePrices() {
@@ -256,6 +267,7 @@ async function takeSnapshot(roundId) {
     if (!Array.isArray(miners)) miners = [];
 
     const classes = { MICRO: [], SEMUT: [], MID: [], HIGH: [], WHALE: [] };
+    const microSub = { MICRO_BAWAH: [], MICRO_MID: [], MICRO_ATAS: [] };
     let totalBoardEth = 0;
     let myBetEth = 0;
     let totalPlayers = 0;
@@ -272,6 +284,11 @@ async function takeSnapshot(roundId) {
       if (addr === MY_ADDRESS) { myBetEth += dEth; continue; }
       const cls = classifyBet(dEth);
       classes[cls].push({ addr, bet: dEth });
+      // MICRO sub-class breakdown
+      if (cls === 'MICRO') {
+        const sub = classifyMicroSub(dEth);
+        microSub[sub].push({ addr, bet: dEth });
+      }
     }
 
     // hitung statistik per kelas
@@ -287,6 +304,17 @@ async function takeSnapshot(roundId) {
       };
     }
 
+    // hitung statistik MICRO sub-class (top bet & total)
+    const microStats = {};
+    for (const sub in microSub) {
+      const arr = microSub[sub];
+      microStats[sub] = {
+        count: arr.length,
+        total: arr.reduce((s, x) => s + x.bet, 0),
+        top: arr.length > 0 ? Math.max(...arr.map(x => x.bet)) : 0,
+      };
+    }
+
     return {
       roundId,
       totalPlayers,
@@ -295,6 +323,8 @@ async function takeSnapshot(roundId) {
       myBetEth,
       classes,
       stats,
+      microSub,
+      microStats,
       timestamp: Date.now(),
     };
   } catch (e) {
@@ -389,15 +419,21 @@ async function sendSnapshotReport(decision) {
   const s = decision.snapshot;
   if (!s) return;
 
+  // MICRO sub-class breakdown
+  const ms = s.microStats || { MICRO_BAWAH: { count: 0, top: 0, total: 0 }, MICRO_MID: { count: 0, top: 0, total: 0 }, MICRO_ATAS: { count: 0, top: 0, total: 0 } };
+
   const lines = [
     `📊 *R#${s.roundId} SNAPSHOT* (det 52, ref R#${s.roundId - 1})`,
     `Players: *${s.totalPlayers}* | Board: *${s.totalBoardEth.toFixed(6)} ETH* ($${s.totalBoardUsd.toFixed(2)})`,
     ``,
     `*Distribusi Lawan:*`,
-    `  🐜 MICRO: ${s.stats.MICRO.count} (avg ${s.stats.MICRO.avg.toFixed(6)})`,
-    `  🐝 SEMUT: ${s.stats.SEMUT.count} (top ${s.stats.SEMUT.max.toFixed(6)})`,
-    `  🦗 MID  : ${s.stats.MID.count} (top ${s.stats.MID.max.toFixed(6)})`,
-    `  🦂 HIGH : ${s.stats.HIGH.count} (top ${s.stats.HIGH.max.toFixed(6)})`,
+    `  🐜 MICRO: ${s.stats.MICRO.count} (top ${s.stats.MICRO.max.toFixed(6)} | tot ${s.stats.MICRO.total.toFixed(6)})`,
+    `     ├ Bawah (<13): ${ms.MICRO_BAWAH.count} (top ${ms.MICRO_BAWAH.top.toFixed(6)} | tot ${ms.MICRO_BAWAH.total.toFixed(6)})`,
+    `     ├ Mid (13-26): ${ms.MICRO_MID.count} (top ${ms.MICRO_MID.top.toFixed(6)} | tot ${ms.MICRO_MID.total.toFixed(6)})`,
+    `     └ Atas (26-40): ${ms.MICRO_ATAS.count} (top ${ms.MICRO_ATAS.top.toFixed(6)} | tot ${ms.MICRO_ATAS.total.toFixed(6)})`,
+    `  🐝 SEMUT: ${s.stats.SEMUT.count} (top ${s.stats.SEMUT.max.toFixed(6)} | tot ${s.stats.SEMUT.total.toFixed(6)})`,
+    `  🦗 MID  : ${s.stats.MID.count} (top ${s.stats.MID.max.toFixed(6)} | tot ${s.stats.MID.total.toFixed(6)})`,
+    `  🦂 HIGH : ${s.stats.HIGH.count} (top ${s.stats.HIGH.max.toFixed(6)} | tot ${s.stats.HIGH.total.toFixed(6)})`,
     `  🐳 WHALE: ${s.stats.WHALE.count}`,
     ``,
   ];
